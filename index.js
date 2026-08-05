@@ -2,7 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const app = express();
 
-// 1. AJOUT DES CORS (Obligatoire pour que Nuvio accepte de lire l'addon)
+// 1. Autorisations CORS complètes pour Nuvio
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "*");
@@ -11,6 +11,7 @@ app.use((req, res, next) => {
 });
 
 const TMDB_KEY = "14cc580302bf1c4161bf96efb2165215";
+const AGENT = "NuvioAlldebridFork"; // Résout le blocage de sécurité d'Alldebrid
 
 async function getTmdbMetadata(filename, type) {
     try {
@@ -19,13 +20,17 @@ async function getTmdbMetadata(filename, type) {
         const res = await axios.get(`https://themoviedb.org{tmdbType}?api_key=${TMDB_KEY}&query=${encodeURIComponent(cleanName)}&language=fr-FR`);
         if (res.data.results && res.data.results.length > 0) {
             const first = res.data.results[0];
-            return { name: first.title || first.name, poster: `https://tmdb.org{first.poster_path}`, description: first.overview };
+            return { 
+                name: first.title || first.name, 
+                poster: `https://tmdb.org{first.poster_path}`, 
+                description: first.overview || "Fichier disponible sur ton Cloud Alldebrid."
+            };
         }
     } catch (e) {}
     return { name: filename, poster: "https://placehold.co", description: "Fichier Cloud Alldebrid" };
 }
 
-// Interface d'accueil avec le nouveau format d'URL propre
+// Interface de configuration
 app.get("/", (req, res) => {
     res.send(`
         <div style="font-family:sans-serif; padding:30px; max-width:400px; margin:auto; text-align:center; background:#f4f4f9; border-radius:10px; margin-top:50px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -50,81 +55,99 @@ app.get("/", (req, res) => {
     `);
 });
 
-// Nouvelle route Manifest adaptée à Nuvio
+// Manifeste corrigé pour Nuvio
 app.get("/:apiKey/manifest.json", (req, res) => {
     res.json({ 
-        id: "org.nuviofork.alldebrid.local", 
-        version: "3.1.0", 
-        name: "Mon Cloud Local", 
-        description: "Trie Alldebrid.", 
+        id: "org.nuviofork.alldebrid.addon", 
+        version: "4.0.0", 
+        name: "Cloud Alldebrid Organisé", 
+        description: "Affiche tes torrents Alldebrid triés en Films, Séries et Animes (Infos FR via TMDB).", 
         resources: ["catalog", "stream"], 
-        types: ["movie", "series", "anime"], 
+        types: ["movie", "series"], 
         catalogs: [
             { type: "movie", id: "my_ad_movies", name: "Mes Films Alldebrid" }, 
             { type: "series", id: "my_ad_series", name: "Mes Séries Alldebrid" }, 
-            { type: "anime", id: "my_ad_animes", name: "Mes Animes Alldebrid" }
+            { type: "series", id: "my_ad_animes", name: "Mes Animes Alldebrid" }
         ], 
-        idPrefixes: ["ad_cloud:", "tt"] 
+        idPrefixes: ["tt", "ad_"] 
     });
 });
 
-// Nouvelle route Catalogues
+// Gestionnaire des Catalogues Perso
 app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
-    const { apiKey, type, id } = req.params;
+    const { apiKey, id } = req.params;
     try {
-        const response = await axios.get(`https://alldebrid.com{apiKey}&agent=Nuvio`);
+        const response = await axios.get(`https://alldebrid.com{apiKey}&agent=${AGENT}`);
         const magnets = response.data.data.magnets || [];
         let metas = [];
         
-        const itemsToProcess = magnets.slice(0, 15);
+        // Limite à 20 torrents pour éviter le timeout Serverless
+        const itemsToProcess = magnets.slice(0, 20);
 
         for (const item of itemsToProcess) {
             const title = item.filename.toLowerCase();
             const isAnime = title.includes("vostfr") || (title.includes("[") && title.includes("]"));
             const isSeries = title.match(/s\d+e\d+/) || title.includes("season") || item.statusCode === 3;
-            let match = false; let currentType = "movie";
-            if (id === "my_ad_animes" && isAnime) { match = true; currentType = "anime"; }
+            
+            let match = false; 
+            let currentType = "movie";
+
+            if (id === "my_ad_animes" && isAnime) { match = true; currentType = "series"; }
             else if (id === "my_ad_series" && isSeries && !isAnime) { match = true; currentType = "series"; }
             else if (id === "my_ad_movies" && !isSeries && !isAnime) { match = true; currentType = "movie"; }
+
             if (match) {
                 const tmdb = await getTmdbMetadata(item.filename, currentType);
-                metas.push({ id: `ad_cloud:${item.id}`, type: type, name: tmdb.name, poster: tmdb.poster, description: tmdb.description });
+                metas.push({ 
+                    id: `ad_${item.id}`, // Format d'ID nettoyé
+                    type: currentType, 
+                    name: tmdb.name, 
+                    poster: tmdb.poster, 
+                    description: tmdb.description 
+                });
             }
         }
         res.json({ metas: metas });
     } catch (err) { res.json({ metas: [] }); }
 });
 
-// Nouvelle route Streams
+// Gestionnaire de Flux (Streaming complet Cache Global + Cloud)
 app.get("/:apiKey/stream/:type/:id.json", async (req, res) => {
     const { apiKey, type, id } = req.params;
     let streams = [];
     try {
-        if (id.startsWith("ad_cloud:")) {
-            const magnetId = id.replace("ad_cloud:", "");
-            const response = await axios.get(`https://alldebrid.com{apiKey}&agent=Nuvio&id=${magnetId}`);
+        // CAS A : Lecture depuis tes Catalogues Cloud Perso (ID commence par ad_)
+        if (id.startsWith("ad_")) {
+            const magnetId = id.replace("ad_", "");
+            const response = await axios.get(`https://alldebrid.com{apiKey}&agent=${AGENT}&id=${magnetId}`);
             const magnetData = response.data.data.magnets;
             if (magnetData && magnetData.files) {
                 for (const file of magnetData.files) {
                     if (file.link) {
-                        const unlockRes = await axios.get(`https://alldebrid.com{apiKey}&agent=Nuvio&link=${encodeURIComponent(file.link)}`);
+                        const unlockRes = await axios.get(`https://alldebrid.com{apiKey}&agent=${AGENT}&link=${encodeURIComponent(file.link)}`);
                         if (unlockRes.data.data && unlockRes.data.data.link) {
-                            streams.push({ name: "☁️ Cloud Personnel", title: file.name, url: unlockRes.data.data.link });
+                            streams.push({ name: "☁️ Mon Cloud", title: file.name, url: unlockRes.data.data.link });
                         }
                     }
                 }
             }
             return res.json({ streams: streams });
         }
+
+        // CAS B : Recherche Globale (Clic depuis les menus TMDB/Trakt natifs de Nuvio)
         const torrentioRes = await axios.get(`https://strem.fun{type}/${id}.json`).catch(() => null);
         if (torrentioRes && torrentioRes.data && torrentioRes.data.streams) {
             const torrentsFound = torrentioRes.data.streams.map(s => s.infoHash).filter(Boolean);
             if (torrentsFound.length > 0) {
-                const cacheCheck = await axios.post(`https://alldebrid.com{apiKey}&agent=Nuvio`, { magnets: torrentsFound.slice(0, 15) });
+                const cacheCheck = await axios.post(`https://alldebrid.com{apiKey}&agent=${AGENT}`, { magnets: torrentsFound.slice(0, 15) });
                 if (cacheCheck.data.data && cacheCheck.data.data.magnets) {
                     cacheCheck.data.data.magnets.forEach(mag => {
                         if (mag.instant) {
-                            streams.push({ name: "⚡ Cache Global", title: `${mag.filename}\nPrêt à lire`, url: `https://alldebrid.com{apiKey}&agent=Nuvio&link=${encodeURIComponent(mag.link)}` });
+                            streams.push({ 
+                                name: "⚡ Cache Global", 
+                                title: `${mag.filename}\nPrêt à lire immédiatement`, 
+                                url: `https://alldebrid.com{apiKey}&agent=${AGENT}&link=${encodeURIComponent(mag.link)}` 
+                            });
                         }
                     });
                 }
