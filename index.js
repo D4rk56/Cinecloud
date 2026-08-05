@@ -1,8 +1,6 @@
-cat << 'EOF' > index.js
 const express = require("express");
 const axios = require("axios");
 const app = express();
-const PORT = process.env.PORT || 10000;
 
 const TMDB_KEY = "14cc580302bf1c4161bf96efb2165215";
 
@@ -19,12 +17,12 @@ async function getTmdbMetadata(filename, type) {
     return { name: filename, poster: "https://placehold.co", description: "Fichier Cloud Alldebrid" };
 }
 
-// PAGE D'ACCUEIL : L'interface visuelle de configuration
+// Interface d'accueil
 app.get("/", (req, res) => {
     res.send(`
         <div style="font-family:sans-serif; padding:30px; max-width:400px; margin:auto; text-align:center; background:#f4f4f9; border-radius:10px; margin-top:50px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
             <h2 style="color:#e50914;">Configuration Alldebrid - Nuvio</h2>
-            <p style="color:#333;">Entre ta clé API Alldebrid pour configurer l'addon localement.</p>
+            <p style="color:#333;">Entre ta clé API Alldebrid pour configurer l'addon.</p>
             <input type="text" id="key" placeholder="Ta clé API Alldebrid" style="width:100%; padding:12px; margin-bottom:15px; border:1px solid #ccc; border-radius:5px; box-sizing:border-box;"><br>
             <button onclick="generate()" style="padding:12px 20px; background:#e50914; color:white; border:none; border-radius:5px; width:100%; font-weight:bold; cursor:pointer;">Générer le lien Nuvio</button>
             <div id="box" style="display:none; margin-top:25px; padding:15px; background:#fff; border:1px dashed #007bff; border-radius:5px;">
@@ -44,18 +42,24 @@ app.get("/", (req, res) => {
     `);
 });
 
+// Manifest Stremio / Nuvio
 app.get("/:userConfig/manifest.json", (req, res) => {
     res.json({ id: "org.nuviofork.alldebrid.local", version: "3.0.0", name: "Mon Cloud Local", description: "Trie Alldebrid.", resources: ["catalog", "stream"], types: ["movie", "series", "anime"], catalogs: [{ type: "movie", id: "my_ad_movies", name: "Mes Films Alldebrid" }, { type: "series", id: "my_ad_series", name: "Mes Séries Alldebrid" }, { type: "anime", id: "my_ad_animes", name: "Mes Animes Alldebrid" }], idPrefixes: ["ad_cloud:", "tt"] });
 });
 
+// Gestionnaire de catalogues
 app.get("/:userConfig/catalog/:type/:id.json", async (req, res) => {
-    const { userConfig, id } = req.params;
+    const { userConfig, type, id } = req.params;
     const apiKey = userConfig.replace("apikey=", "");
     try {
         const response = await axios.get(`https://alldebrid.com{apiKey}&agent=Nuvio`);
         const magnets = response.data.data.magnets || [];
         let metas = [];
-        for (const item of magnets) {
+        
+        // Limiter à 15 éléments max pour éviter que Vercel coupe la connexion (Timeout)
+        const itemsToProcess = magnets.slice(0, 15);
+
+        for (const item of itemsToProcess) {
             const title = item.filename.toLowerCase();
             const isAnime = title.includes("vostfr") || (title.includes("[") && title.includes("]"));
             const isSeries = title.match(/s\d+e\d+/) || title.includes("season") || item.statusCode === 3;
@@ -65,13 +69,14 @@ app.get("/:userConfig/catalog/:type/:id.json", async (req, res) => {
             else if (id === "my_ad_movies" && !isSeries && !isAnime) { match = true; currentType = "movie"; }
             if (match) {
                 const tmdb = await getTmdbMetadata(item.filename, currentType);
-                metas.push({ id: `ad_cloud:${item.id}`, type: req.params.type, name: tmdb.name, poster: tmdb.poster, description: tmdb.description });
+                metas.push({ id: `ad_cloud:${item.id}`, type: type, name: tmdb.name, poster: tmdb.poster, description: tmdb.description });
             }
         }
         res.json({ metas: metas });
     } catch (err) { res.json({ metas: [] }); }
 });
 
+// Gestionnaire de streams
 app.get("/:userConfig/stream/:type/:id.json", async (req, res) => {
     const { userConfig, type, id } = req.params;
     const apiKey = userConfig.replace("apikey=", "");
@@ -97,7 +102,7 @@ app.get("/:userConfig/stream/:type/:id.json", async (req, res) => {
         if (torrentioRes && torrentioRes.data && torrentioRes.data.streams) {
             const torrentsFound = torrentioRes.data.streams.map(s => s.infoHash).filter(Boolean);
             if (torrentsFound.length > 0) {
-                const cacheCheck = await axios.post(`https://alldebrid.com{apiKey}&agent=Nuvio`, { magnets: torrentsFound.slice(0, 20) });
+                const cacheCheck = await axios.post(`https://alldebrid.com{apiKey}&agent=Nuvio`, { magnets: torrentsFound.slice(0, 15) });
                 if (cacheCheck.data.data && cacheCheck.data.data.magnets) {
                     cacheCheck.data.data.magnets.forEach(mag => {
                         if (mag.instant) {
@@ -112,4 +117,3 @@ app.get("/:userConfig/stream/:type/:id.json", async (req, res) => {
 });
 
 module.exports = app;
-
