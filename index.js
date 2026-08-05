@@ -111,5 +111,5 @@ app.get("/:userConfig/stream/:type/:id.json", async (req, res) => {
     } catch (err) { res.json({ streams: [] }); }
 });
 
-app.listen(PORT, () => console.log(`Addon local démarré sur le port ${PORT}`));
-EOF
+module.exports = app;
+
