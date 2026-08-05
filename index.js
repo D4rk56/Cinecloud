@@ -2,7 +2,8 @@ cat << 'EOF' > index.js
 const express = require("express");
 const axios = require("axios");
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 10000;
+
 const TMDB_KEY = "14cc580302bf1c4161bf96efb2165215";
 
 async function getTmdbMetadata(filename, type) {
