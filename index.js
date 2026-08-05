@@ -2,6 +2,14 @@ const express = require("express");
 const axios = require("axios");
 const app = express();
 
+// 1. AJOUT DES CORS (Obligatoire pour que Nuvio accepte de lire l'addon)
+app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+    res.setHeader("Access-Control-Allow-Methods", "*");
+    next();
+});
+
 const TMDB_KEY = "14cc580302bf1c4161bf96efb2165215";
 
 async function getTmdbMetadata(filename, type) {
@@ -17,7 +25,7 @@ async function getTmdbMetadata(filename, type) {
     return { name: filename, poster: "https://placehold.co", description: "Fichier Cloud Alldebrid" };
 }
 
-// Interface d'accueil
+// Interface d'accueil avec le nouveau format d'URL propre
 app.get("/", (req, res) => {
     res.send(`
         <div style="font-family:sans-serif; padding:30px; max-width:400px; margin:auto; text-align:center; background:#f4f4f9; border-radius:10px; margin-top:50px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -34,7 +42,7 @@ app.get("/", (req, res) => {
             function generate() {
                 const key = document.getElementById("key").value.trim();
                 if(!key) return alert("Veuillez entrer une clé valide");
-                const link = window.location.origin + "/apikey=" + key + "/manifest.json";
+                const link = window.location.origin + "/" + key + "/manifest.json";
                 document.getElementById("box").style.display = "block";
                 document.getElementById("result").innerText = link;
             }
@@ -42,21 +50,32 @@ app.get("/", (req, res) => {
     `);
 });
 
-// Manifest Stremio / Nuvio
-app.get("/:userConfig/manifest.json", (req, res) => {
-    res.json({ id: "org.nuviofork.alldebrid.local", version: "3.0.0", name: "Mon Cloud Local", description: "Trie Alldebrid.", resources: ["catalog", "stream"], types: ["movie", "series", "anime"], catalogs: [{ type: "movie", id: "my_ad_movies", name: "Mes Films Alldebrid" }, { type: "series", id: "my_ad_series", name: "Mes Séries Alldebrid" }, { type: "anime", id: "my_ad_animes", name: "Mes Animes Alldebrid" }], idPrefixes: ["ad_cloud:", "tt"] });
+// Nouvelle route Manifest adaptée à Nuvio
+app.get("/:apiKey/manifest.json", (req, res) => {
+    res.json({ 
+        id: "org.nuviofork.alldebrid.local", 
+        version: "3.1.0", 
+        name: "Mon Cloud Local", 
+        description: "Trie Alldebrid.", 
+        resources: ["catalog", "stream"], 
+        types: ["movie", "series", "anime"], 
+        catalogs: [
+            { type: "movie", id: "my_ad_movies", name: "Mes Films Alldebrid" }, 
+            { type: "series", id: "my_ad_series", name: "Mes Séries Alldebrid" }, 
+            { type: "anime", id: "my_ad_animes", name: "Mes Animes Alldebrid" }
+        ], 
+        idPrefixes: ["ad_cloud:", "tt"] 
+    });
 });
 
-// Gestionnaire de catalogues
-app.get("/:userConfig/catalog/:type/:id.json", async (req, res) => {
-    const { userConfig, type, id } = req.params;
-    const apiKey = userConfig.replace("apikey=", "");
+// Nouvelle route Catalogues
+app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
+    const { apiKey, type, id } = req.params;
     try {
         const response = await axios.get(`https://alldebrid.com{apiKey}&agent=Nuvio`);
         const magnets = response.data.data.magnets || [];
         let metas = [];
         
-        // Limiter à 15 éléments max pour éviter que Vercel coupe la connexion (Timeout)
         const itemsToProcess = magnets.slice(0, 15);
 
         for (const item of itemsToProcess) {
@@ -76,10 +95,9 @@ app.get("/:userConfig/catalog/:type/:id.json", async (req, res) => {
     } catch (err) { res.json({ metas: [] }); }
 });
 
-// Gestionnaire de streams
-app.get("/:userConfig/stream/:type/:id.json", async (req, res) => {
-    const { userConfig, type, id } = req.params;
-    const apiKey = userConfig.replace("apikey=", "");
+// Nouvelle route Streams
+app.get("/:apiKey/stream/:type/:id.json", async (req, res) => {
+    const { apiKey, type, id } = req.params;
     let streams = [];
     try {
         if (id.startsWith("ad_cloud:")) {
