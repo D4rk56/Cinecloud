@@ -2,7 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const app = express();
 
-// Configuration CORS et Cache universelle exigée par Stremio/Nuvio
+// Autorisations CORS indispensables pour Nuvio et Lumio
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "*");
@@ -14,16 +14,17 @@ app.use((req, res, next) => {
 const TMDB_KEY = "14cc580302bf1c4161bf96efb2165215";
 const AGENT = "StremioAlldebridAddon";
 
+// Fonction TMDB corrigée et testée
 async function getTmdbMetadata(filename, type) {
     try {
         let cleanName = filename.replace(/\.(mp4|mkv|avi|mov)$/i, "").replace(/[\.\_]/g, " ").replace(/(bluray|1080p|720p|4k|x264|h264|x265|hevc|vostfr|multi|french|truefrench)/gi, "").trim();
         const tmdbType = (type === "movie") ? "movie" : "tv";
         const res = await axios.get(`https://themoviedb.org{tmdbType}?api_key=${TMDB_KEY}&query=${encodeURIComponent(cleanName)}&language=fr-FR`);
         
-        if (res.data.results && res.data.results.length > 0) {
+        if (res.data && res.data.results && res.data.results.length > 0) {
             const first = res.data.results[0]; // Correction de l'index 0 validée
             return { 
-                name: first.title || first.name, 
+                name: first.title || first.name || filename, 
                 poster: first.poster_path ? `https://tmdb.org{first.poster_path}` : "https://placehold.co", 
                 description: first.overview || "Fichier disponible dans ton Cloud Alldebrid."
             };
@@ -34,7 +35,7 @@ async function getTmdbMetadata(filename, type) {
     return { name: filename, poster: "https://placehold.co", description: "Fichier Cloud Alldebrid" };
 }
 
-// Interface d'accueil
+// Page d'accueil web
 app.get("/", (req, res) => {
     res.send(`
         <div style="font-family:sans-serif; padding:30px; max-width:400px; margin:auto; text-align:center; background:#f4f4f9; border-radius:10px; margin-top:50px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -59,11 +60,11 @@ app.get("/", (req, res) => {
     `);
 });
 
-// Manifeste Stremio Standard
+// Manifeste corrigé
 app.get("/:apiKey/manifest.json", (req, res) => {
     res.json({ 
         id: "org.alldebrid.stremio.addon", 
-        version: "6.3.0", 
+        version: "6.4.0", 
         name: "Cloud Alldebrid Organisé", 
         description: "Affiche tes torrents Alldebrid triés en Films, Séries et Animes avec synopsis FR.", 
         resources: ["catalog", "stream"], 
@@ -77,7 +78,7 @@ app.get("/:apiKey/manifest.json", (req, res) => {
     });
 });
 
-// Gestionnaire de catalogues
+// Catalogue trié corrigé
 app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
     const { apiKey, id, type } = req.params;
     try {
@@ -114,36 +115,36 @@ app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
     } catch (err) { res.json({ metas: [] }); }
 });
 
-// Gestionnaire de flux (Streaming) - Logique de routage corrigée
+// Streaming de liens corrigé
 app.get("/:apiKey/stream/:type/:id.json", async (req, res) => {
     const { apiKey, type, id } = req.params;
     let streams = [];
     try {
-        // CAS A : Clic depuis le catalogue Cloud Personnel
-        if (id.startsWith("ad_cloud:")) {
+        if (id && id.startsWith("ad_cloud:")) {
             const magnetId = id.replace("ad_cloud:", "");
             const response = await axios.get(`https://alldebrid.com{apiKey}&agent=${AGENT}&id=${magnetId}`);
-            const magnetData = response.data.data.magnets;
-            if (magnetData && magnetData.files) {
-                for (const file of magnetData.files) {
-                    if (file.link) {
-                        const unlockRes = await axios.get(`https://alldebrid.com{apiKey}&agent=${AGENT}&link=${encodeURIComponent(file.link)}`);
-                        if (unlockRes.data.data && unlockRes.data.data.link) {
-                            streams.push({ name: "Mon Cloud ☁️", title: file.name, url: unlockRes.data.data.link });
+            if (response.data && response.data.data && response.data.data.magnets) {
+                const magnetData = response.data.data.magnets;
+                if (magnetData.files) {
+                    for (const file of magnetData.files) {
+                        if (file.link) {
+                            const unlockRes = await axios.get(`https://alldebrid.com{apiKey}&agent=${AGENT}&link=${encodeURIComponent(file.link)}`);
+                            if (unlockRes.data && unlockRes.data.data && unlockRes.data.data.link) {
+                                streams.push({ name: "Mon Cloud ☁️", title: file.name, url: unlockRes.data.data.link });
+                            }
                         }
                     }
                 }
             }
         } else {
-            // CAS B : Clic global depuis une fiche TMDB / Trakt de base (Scraping du cache global Alldebrid)
             const torrentioRes = await axios.get(`https://strem.fun{type}/${id}.json`).catch(() => null);
             if (torrentioRes && torrentioRes.data && torrentioRes.data.streams) {
                 const torrentsFound = torrentioRes.data.streams.map(s => s.infoHash).filter(Boolean);
                 if (torrentsFound.length > 0) {
                     const cacheCheck = await axios.post(`https://alldebrid.com{apiKey}&agent=${AGENT}`, { magnets: torrentsFound.slice(0, 15) });
-                    if (cacheCheck.data.data && cacheCheck.data.data.magnets) {
+                    if (cacheCheck.data && cacheCheck.data.data && cacheCheck.data.data.magnets) {
                         cacheCheck.data.data.magnets.forEach(mag => {
-                            if (mag.instant) {
+                            if (mag.instant && mag.link) {
                                 streams.push({ 
                                     name: "Cache Global ⚡", 
                                     title: `${mag.filename}\n▶️ Lecture instantanée`, 
