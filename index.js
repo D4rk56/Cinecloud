@@ -2,27 +2,30 @@ const express = require("express");
 const axios = require("axios");
 const app = express();
 
-// Autorisations CORS indispensables pour Nuvio et Lumio
+// En-têtes CORS universels pour Stremio et Nuvio
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "*");
     res.setHeader("Access-Control-Allow-Methods", "*");
-    res.setHeader("Cache-Control", "max-age=3600, public");
     next();
 });
 
 const TMDB_KEY = "14cc580302bf1c4161bf96efb2165215";
-const AGENT = "StremioAlldebridAddon";
+const AGENT = "NuvioAlldebridAddon"; // Identifiant agent requis par Alldebrid
 
-// Fonction TMDB corrigée et testée
 async function getTmdbMetadata(filename, type) {
     try {
-        let cleanName = filename.replace(/\.(mp4|mkv|avi|mov)$/i, "").replace(/[\.\_]/g, " ").replace(/(bluray|1080p|720p|4k|x264|h264|x265|hevc|vostfr|multi|french|truefrench)/gi, "").trim();
+        let cleanName = filename
+            .replace(/\.(mp4|mkv|avi|mov)$/i, "")
+            .replace(/[\.\_]/g, " ")
+            .replace(/(bluray|1080p|720p|4k|x264|h264|x265|hevc|vostfr|multi|french|truefrench)/gi, "")
+            .trim();
+
         const tmdbType = (type === "movie") ? "movie" : "tv";
         const res = await axios.get(`https://themoviedb.org{tmdbType}?api_key=${TMDB_KEY}&query=${encodeURIComponent(cleanName)}&language=fr-FR`);
         
         if (res.data && res.data.results && res.data.results.length > 0) {
-            const first = res.data.results[0]; // Correction de l'index 0 validée
+            const first = res.data.results[0];
             return { 
                 name: first.title || first.name || filename, 
                 poster: first.poster_path ? `https://tmdb.org{first.poster_path}` : "https://placehold.co", 
@@ -35,7 +38,7 @@ async function getTmdbMetadata(filename, type) {
     return { name: filename, poster: "https://placehold.co", description: "Fichier Cloud Alldebrid" };
 }
 
-// Page d'accueil web
+// Interface d'accueil web
 app.get("/", (req, res) => {
     res.send(`
         <div style="font-family:sans-serif; padding:30px; max-width:400px; margin:auto; text-align:center; background:#f4f4f9; border-radius:10px; margin-top:50px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -60,11 +63,11 @@ app.get("/", (req, res) => {
     `);
 });
 
-// Manifeste corrigé
+// Manifeste de l'addon
 app.get("/:apiKey/manifest.json", (req, res) => {
     res.json({ 
         id: "org.alldebrid.stremio.addon", 
-        version: "6.4.0", 
+        version: "6.5.0", 
         name: "Cloud Alldebrid Organisé", 
         description: "Affiche tes torrents Alldebrid triés en Films, Séries et Animes avec synopsis FR.", 
         resources: ["catalog", "stream"], 
@@ -78,14 +81,17 @@ app.get("/:apiKey/manifest.json", (req, res) => {
     });
 });
 
-// Catalogue trié corrigé
+// Route des Catalogues
 app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
     const { apiKey, id, type } = req.params;
     try {
         const response = await axios.get(`https://alldebrid.com{apiKey}&agent=${AGENT}`);
-        const magnets = response.data.data.magnets || [];
-        let metas = [];
+        if (!response.data || !response.data.data || !response.data.data.magnets) {
+            return res.json({ metas: [] });
+        }
         
+        const magnets = response.data.data.magnets;
+        let metas = [];
         const itemsToProcess = magnets.slice(0, 15);
 
         for (const item of itemsToProcess) {
@@ -112,10 +118,12 @@ app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
             }
         }
         res.json({ metas: metas });
-    } catch (err) { res.json({ metas: [] }); }
+    } catch (err) { 
+        res.json({ metas: [] }); 
+    }
 });
 
-// Streaming de liens corrigé
+// Route du Streaming
 app.get("/:apiKey/stream/:type/:id.json", async (req, res) => {
     const { apiKey, type, id } = req.params;
     let streams = [];
@@ -157,7 +165,9 @@ app.get("/:apiKey/stream/:type/:id.json", async (req, res) => {
             }
         }
         res.json({ streams: streams });
-    } catch (err) { res.json({ streams: [] }); }
+    } catch (err) { 
+        res.json({ streams: [] }); 
+    }
 });
 
 module.exports = app;
