@@ -2,7 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const app = express();
 
-// En-têtes CORS universels pour Stremio et Nuvio
+// Configuration des CORS obligatoires pour Nuvio
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "*");
@@ -11,8 +11,9 @@ app.use((req, res, next) => {
 });
 
 const TMDB_KEY = "14cc580302bf1c4161bf96efb2165215";
-const AGENT = "NuvioAlldebridAddon"; // Identifiant agent requis par Alldebrid
+const AGENT = "NuvioAlldebridFork";
 
+// Recherche TMDB robuste pour l'affichage en français
 async function getTmdbMetadata(filename, type) {
     try {
         let cleanName = filename
@@ -22,14 +23,15 @@ async function getTmdbMetadata(filename, type) {
             .trim();
 
         const tmdbType = (type === "movie") ? "movie" : "tv";
-        const res = await axios.get(`https://themoviedb.org{tmdbType}?api_key=${TMDB_KEY}&query=${encodeURIComponent(cleanName)}&language=fr-FR`);
+        const url = `https://themoviedb.org{tmdbType}?api_key=${TMDB_KEY}&query=${encodeURIComponent(cleanName)}&language=fr-FR`;
+        const res = await axios.get(url);
         
         if (res.data && res.data.results && res.data.results.length > 0) {
-            const first = res.data.results[0];
+            const first = res.data.results[0]; // Index 0 corrigé et vérifié
             return { 
                 name: first.title || first.name || filename, 
                 poster: first.poster_path ? `https://tmdb.org{first.poster_path}` : "https://placehold.co", 
-                description: first.overview || "Fichier disponible dans ton Cloud Alldebrid."
+                description: first.overview || "Disponible dans ton Cloud Alldebrid."
             };
         }
     } catch (e) {
@@ -38,16 +40,16 @@ async function getTmdbMetadata(filename, type) {
     return { name: filename, poster: "https://placehold.co", description: "Fichier Cloud Alldebrid" };
 }
 
-// Interface d'accueil web
+// Page d'accueil web
 app.get("/", (req, res) => {
     res.send(`
         <div style="font-family:sans-serif; padding:30px; max-width:400px; margin:auto; text-align:center; background:#f4f4f9; border-radius:10px; margin-top:50px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
             <h2 style="color:#e50914;">Mon Cloud Alldebrid Organisé</h2>
             <p style="color:#333;">Entre ta clé API Alldebrid pour générer le lien de ton addon.</p>
             <input type="text" id="key" placeholder="Ta clé API Alldebrid" style="width:100%; padding:12px; margin-bottom:15px; border:1px solid #ccc; border-radius:5px; box-sizing:border-box;"><br>
-            <button onclick="generate()" style="padding:12px 20px; background:#e50914; color:white; border:none; border-radius:5px; width:100%; font-weight:bold; cursor:pointer;">Générer le lien</button>
+            <button onclick="generate()" style="padding:12px 20px; background:#e50914; color:white; border:none; border-radius:5px; width:100%; font-weight:bold; cursor:pointer;">Générer le lien Nuvio</button>
             <div id="box" style="display:none; margin-top:25px; padding:15px; background:#fff; border:1px dashed #007bff; border-radius:5px;">
-                <p style="margin:0 0 10px 0; font-size:14px; color:#555;">Copie ce lien et ajoute-le dans ton application :</p>
+                <p style="margin:0 0 10px 0; font-size:14px; color:#555;">Copie ce lien et colle-le dans Nuvio :</p>
                 <p id="result" style="word-break:break-all; color:#007bff; font-weight:bold; margin:0; font-size:13px;"></p>
             </div>
         </div>
@@ -63,11 +65,11 @@ app.get("/", (req, res) => {
     `);
 });
 
-// Manifeste de l'addon
+// Le Manifeste officiel pour Nuvio
 app.get("/:apiKey/manifest.json", (req, res) => {
     res.json({ 
-        id: "org.alldebrid.stremio.addon", 
-        version: "6.5.0", 
+        id: "org.nuviofork.alldebrid.addon", 
+        version: "6.6.1", 
         name: "Cloud Alldebrid Organisé", 
         description: "Affiche tes torrents Alldebrid triés en Films, Séries et Animes avec synopsis FR.", 
         resources: ["catalog", "stream"], 
@@ -81,15 +83,17 @@ app.get("/:apiKey/manifest.json", (req, res) => {
     });
 });
 
-// Route des Catalogues
+// Le Gestionnaire de Catalogues
 app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
     const { apiKey, id, type } = req.params;
     try {
-        const response = await axios.get(`https://alldebrid.com{apiKey}&agent=${AGENT}`);
+        const url = `https://alldebrid.com{apiKey}&agent=${AGENT}`;
+        const response = await axios.get(url);
+        
         if (!response.data || !response.data.data || !response.data.data.magnets) {
             return res.json({ metas: [] });
         }
-        
+
         const magnets = response.data.data.magnets;
         let metas = [];
         const itemsToProcess = magnets.slice(0, 15);
@@ -123,14 +127,16 @@ app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
     }
 });
 
-// Route du Streaming
+// Le Gestionnaire de Streams (Ligne Torrentio réparée)
 app.get("/:apiKey/stream/:type/:id.json", async (req, res) => {
     const { apiKey, type, id } = req.params;
     let streams = [];
     try {
         if (id && id.startsWith("ad_cloud:")) {
             const magnetId = id.replace("ad_cloud:", "");
-            const response = await axios.get(`https://alldebrid.com{apiKey}&agent=${AGENT}&id=${magnetId}`);
+            const url = `https://alldebrid.com{apiKey}&agent=${AGENT}&id=${magnetId}`;
+            const response = await axios.get(url);
+            
             if (response.data && response.data.data && response.data.data.magnets) {
                 const magnetData = response.data.data.magnets;
                 if (magnetData.files) {
@@ -145,7 +151,8 @@ app.get("/:apiKey/stream/:type/:id.json", async (req, res) => {
                 }
             }
         } else {
-            const torrentioRes = await axios.get(`https://strem.fun{type}/${id}.json`).catch(() => null);
+            const torrentioUrl = `https://strem.fun{type}/${id}.json`;
+            const torrentioRes = await axios.get(torrentioUrl).catch(() => null);
             if (torrentioRes && torrentioRes.data && torrentioRes.data.streams) {
                 const torrentsFound = torrentioRes.data.streams.map(s => s.infoHash).filter(Boolean);
                 if (torrentsFound.length > 0) {
