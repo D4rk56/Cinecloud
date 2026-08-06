@@ -50,13 +50,63 @@ async function getTmdbMetadata(filename, type, tmdbKey) {
             return {
                 name: first.title || first.name || filename,
                 poster: first.poster_path ? `https://image.tmdb.org/t/p/w500${first.poster_path}` : "https://placehold.co/300x450",
-                description: first.overview || "Disponible dans ton Cloud Alldebrid."
+                description: first.overview || "Disponible dans ton Cloud Alldebrid.",
+                genreIds: first.genre_ids || [],
+                tmdbId: first.id
             };
         }
     } catch (e) {
         console.error("Erreur TMDB:", e.response ? `HTTP ${e.response.status} - ${JSON.stringify(e.response.data)}` : e.message);
     }
-    return { name: filename, poster: "https://placehold.co/300x450", description: "Fichier Cloud Alldebrid" };
+    return { name: filename, poster: "https://placehold.co/300x450", description: "Fichier Cloud Alldebrid", genreIds: [], tmdbId: null };
+}
+
+// Convertit un id TMDB en id IMDb ("tt...") pour que Cinemeta/AIOMetadata sachent résoudre les métadonnées
+async function tmdbToImdbId(tmdbId, type, tmdbKey) {
+    try {
+        const tmdbType = (type === "movie") ? "movie" : "tv";
+        const url = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}/external_ids?api_key=${tmdbKey}`;
+        const res = await axios.get(url);
+        return res.data && res.data.imdb_id ? res.data.imdb_id : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Construit un catalogue de recommandations à partir des genres les plus fréquents de la bibliothèque
+async function getRecommendations(magnets, type, tmdbKey) {
+    const genreCounts = {};
+    const sample = magnets.slice(0, 10);
+    for (const item of sample) {
+        const tmdb = await getTmdbMetadata(item.filename, type, tmdbKey);
+        for (const g of tmdb.genreIds) genreCounts[g] = (genreCounts[g] || 0) + 1;
+    }
+    const topGenres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([g]) => g);
+    if (topGenres.length === 0) return [];
+
+    try {
+        const tmdbType = (type === "movie") ? "movie" : "tv";
+        const discoverUrl = `https://api.themoviedb.org/3/discover/${tmdbType}?api_key=${tmdbKey}&with_genres=${topGenres.join(",")}&sort_by=popularity.desc&language=fr-FR`;
+        const discoverRes = await axios.get(discoverUrl);
+        const results = (discoverRes.data && discoverRes.data.results || []).slice(0, 15);
+
+        const metas = [];
+        for (const r of results) {
+            const imdbId = await tmdbToImdbId(r.id, type, tmdbKey);
+            if (!imdbId) continue;
+            metas.push({
+                id: imdbId,
+                type: type,
+                name: r.title || r.name,
+                poster: r.poster_path ? `https://image.tmdb.org/t/p/w500${r.poster_path}` : "https://placehold.co/300x450",
+                description: r.overview || ""
+            });
+        }
+        return metas;
+    } catch (e) {
+        console.error("Erreur recommandations:", e.message);
+        return [];
+    }
 }
 
 // Page d'accueil web
@@ -91,10 +141,14 @@ app.get("/", (req, res) => {
 app.get("/:apiKey/:tmdbKey/manifest.json", (req, res) => {
     res.json({
         id: "org.nuviofork.alldebrid.addon",
-        version: "6.6.4",
+        version: "6.7.0",
         name: "Cloud Alldebrid Organisé",
         description: "Affiche tes torrents Alldebrid triés en Films, Séries et Animes avec synopsis FR.",
-        resources: ["catalog", "stream"],
+        resources: [
+            "catalog",
+            { name: "meta", types: ["movie", "series"], idPrefixes: ["ad_cloud:"] },
+            { name: "stream", types: ["movie", "series"], idPrefixes: ["ad_cloud:", "tt"] }
+        ],
         types: ["movie", "series"],
         catalogs: [
             { type: "movie", id: "my_ad_movies", name: "Mes Films Alldebrid" },
@@ -103,6 +157,39 @@ app.get("/:apiKey/:tmdbKey/manifest.json", (req, res) => {
         ],
         idPrefixes: ["ad_cloud:", "tt"]
     });
+});
+
+// Le Gestionnaire de Métadonnées (page de détails) — nécessaire pour nos propres ids ad_cloud:,
+// que ni AIOMetadata ni Cinemeta ne peuvent résoudre puisqu'ils ne les connaissent pas.
+app.get("/:apiKey/:tmdbKey/meta/:type/:id.json", async (req, res) => {
+    const { apiKey, id, type } = req.params;
+    const tmdbKey = (req.params.tmdbKey && req.params.tmdbKey !== "default") ? req.params.tmdbKey : TMDB_KEY_DEFAULT;
+    try {
+        if (!id.startsWith("ad_cloud:")) return res.json({ meta: null });
+        const magnetId = id.replace("ad_cloud:", "");
+        const statusRes = await axios.get(`${AD_BASE_V41}/magnet/status`, {
+            headers: adHeaders(apiKey),
+            params: { id: magnetId }
+        });
+        const magnetData = statusRes.data && statusRes.data.data && statusRes.data.data.magnets;
+        const magnet = Array.isArray(magnetData) ? magnetData[0] : magnetData;
+        if (!magnet || !magnet.filename) return res.json({ meta: null });
+
+        const tmdb = await getTmdbMetadata(magnet.filename, type, tmdbKey);
+        res.json({
+            meta: {
+                id: id,
+                type: type,
+                name: tmdb.name,
+                poster: tmdb.poster,
+                background: tmdb.poster,
+                description: tmdb.description
+            }
+        });
+    } catch (err) {
+        console.error("Erreur meta:", err.response ? JSON.stringify(err.response.data) : err.message);
+        res.json({ meta: null });
+    }
 });
 
 // Le Gestionnaire de Catalogues
@@ -181,38 +268,44 @@ app.get("/:apiKey/:tmdbKey/stream/:type/:id.json", async (req, res) => {
                 }
             }
         } else {
-            // Recherche via Torrentio puis vérification du cache Alldebrid.
-            // NB: ce chemin dépend de /magnet/instant qui n'est plus documenté officiellement par
-            // Alldebrid (peut-être retiré) — à tester séparément si tu veux cette fonctionnalité.
+            // Recherche via Torrentio, puis on "upload" les magnets trouvés sur Alldebrid.
+            // Si le magnet est déjà en cache côté Alldebrid (ready:true), le lien est instantané —
+            // sinon Alldebrid commence à le télécharger sur ses serveurs (pas sur les tiens).
+            // NB : chaque vérification ajoute le magnet à la liste de ton compte Alldebrid
+            // (limite de 30 magnets actifs). C'est le fonctionnement standard des addons debrid.
             const torrentioUrl = `https://torrentio.strem.fun/stream/${type}/${id}.json`;
             const torrentioRes = await axios.get(torrentioUrl).catch(() => null);
 
             if (torrentioRes && torrentioRes.data && torrentioRes.data.streams) {
-                const hashes = torrentioRes.data.streams.map(s => s.infoHash).filter(Boolean).slice(0, 15);
+                const hashes = [...new Set(torrentioRes.data.streams.map(s => s.infoHash).filter(Boolean))].slice(0, 10);
 
                 if (hashes.length > 0) {
-                    const params = hashes.map(h => `magnets[]=${h}`).join("&");
-                    const instantUrl = `${AD_BASE}/magnet/instant?${params}`;
-                    const cacheCheck = await axios.get(instantUrl, { headers: adHeaders(apiKey) }).catch((e) => {
-                        console.error("Erreur magnet/instant:", e.response ? JSON.stringify(e.response.data) : e.message);
+                    const params = hashes.map(h => `magnets[]=${encodeURIComponent(h)}`).join("&");
+                    const uploadUrl = `${AD_BASE}/magnet/upload?${params}`;
+                    const uploadRes = await axios.get(uploadUrl, { headers: adHeaders(apiKey) }).catch((e) => {
+                        console.error("Erreur magnet/upload:", e.response ? JSON.stringify(e.response.data) : e.message);
                         return null;
                     });
 
-                    if (cacheCheck && cacheCheck.data && cacheCheck.data.data && cacheCheck.data.data.magnets) {
-                        for (const mag of cacheCheck.data.data.magnets) {
-                            if (!mag.instant || !mag.files) continue;
-                            const files = flattenFiles(mag.files);
-                            for (const file of files) {
-                                if (!file.l) continue;
-                                const unlockUrl = `${AD_BASE}/link/unlock?link=${encodeURIComponent(file.l)}`;
-                                const unlockRes = await axios.get(unlockUrl, { headers: adHeaders(apiKey) }).catch(() => null);
-                                if (unlockRes && unlockRes.data && unlockRes.data.status === "success" && unlockRes.data.data && unlockRes.data.data.link) {
-                                    streams.push({
-                                        name: "Cache Global ⚡",
-                                        title: `${file.n}\n▶️ Lecture instantanée`,
-                                        url: unlockRes.data.data.link
-                                    });
-                                }
+                    const uploadedMagnets = uploadRes && uploadRes.data && uploadRes.data.data && uploadRes.data.data.magnets;
+                    const readyIds = (uploadedMagnets || []).filter(m => m.ready && m.id).map(m => m.id);
+
+                    for (const magId of readyIds) {
+                        const filesRes = await axios.get(`${AD_BASE}/magnet/files?id[]=${magId}`, { headers: adHeaders(apiKey) }).catch(() => null);
+                        const magnetData = filesRes && filesRes.data && filesRes.data.data && filesRes.data.data.magnets && filesRes.data.data.magnets[0];
+                        if (!magnetData || !magnetData.files) continue;
+
+                        const files = flattenFiles(magnetData.files);
+                        for (const file of files) {
+                            if (!file.l) continue;
+                            const unlockUrl = `${AD_BASE}/link/unlock?link=${encodeURIComponent(file.l)}`;
+                            const unlockRes = await axios.get(unlockUrl, { headers: adHeaders(apiKey) }).catch(() => null);
+                            if (unlockRes && unlockRes.data && unlockRes.data.status === "success" && unlockRes.data.data && unlockRes.data.data.link) {
+                                streams.push({
+                                    name: "Cache Global ⚡",
+                                    title: `${file.n}\n▶️ Lecture instantanée`,
+                                    url: unlockRes.data.data.link
+                                });
                             }
                         }
                     }
