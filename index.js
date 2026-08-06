@@ -14,9 +14,15 @@ const TMDB_KEY = "14cc580302bf1c4161bf96efb2165215";
 const AD_BASE = "https://api.alldebrid.com/v4";
 const AD_BASE_V41 = "https://api.alldebrid.com/v4.1";
 
-// Petit helper pour appeler l'API Alldebrid avec le header d'authentification requis
+// Petit helper pour appeler l'API Alldebrid avec le header d'authentification requis.
+// On ajoute un User-Agent de navigateur car Cloudflare (utilisé par Alldebrid) bloque
+// souvent le User-Agent par défaut d'axios ("axios/x.x.x") en le prenant pour un bot.
 function adHeaders(apiKey) {
-    return { Authorization: `Bearer ${apiKey}` };
+    return {
+        Authorization: `Bearer ${apiKey}`,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    };
 }
 
 // Aplatit l'arborescence de fichiers renvoyée par Alldebrid (n=nom, s=taille, l=lien, e=sous-dossier)
