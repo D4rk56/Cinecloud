@@ -26,24 +26,54 @@ function adHeaders(apiKey) {
     };
 }
 
-// Aplatit l'arborescence de fichiers renvoyée par Alldebrid (n=nom, s=taille, l=lien, e=sous-dossier)
+// Appel POST vers Alldebrid avec un corps en application/x-www-form-urlencoded,
+// conforme aux exemples de la documentation officielle (plus fiable que le GET pour certains endpoints).
+async function adPost(url, apiKey, formEntries) {
+    const params = new URLSearchParams();
+    for (const [key, value] of formEntries) params.append(key, value);
+    return axios.post(url, params.toString(), {
+        headers: { ...adHeaders(apiKey), "Content-Type": "application/x-www-form-urlencoded" }
+    });
+}
 function flattenFiles(entries) {
     if (!Array.isArray(entries)) return [];
     return entries.flatMap(e => (e.e ? flattenFiles(e.e) : [e]));
 }
 
+// Nettoyage robuste : on coupe le nom au premier marqueur technique (année, qualité, codec...)
+// plutôt que de retirer des mots un par un, ce qui laissait souvent des résidus polluant la recherche.
+function extractCleanTitle(filename) {
+    let name = filename
+        .replace(/\.(mp4|mkv|avi|mov)$/i, "")
+        .replace(/[\.\_]/g, " ")
+        .trim();
+
+    const cutMarkers = /\b(19\d{2}|20\d{2}|S\d{1,2}(E\d{1,3})?|SAISON\s?\d{1,2}|COMPLETE|MULTI|VOSTFR|VF2?|FRENCH|TRUEFRENCH|SUBFRENCH|2160p|1080p|720p|480p|4K|UHD|HDR|DV|WEB[\-\.]?DL|WEBRIP|BLURAY|BDRIP|HDTV|REMUX|x264|x265|h264|h265|HEVC|AAC|DTS|ATMOS)\b/i;
+    const match = name.match(cutMarkers);
+    let title = match ? name.slice(0, match.index) : name;
+
+    // Récupère une éventuelle année pour affiner la recherche TMDB
+    const yearMatch = filename.match(/\b(19\d{2}|20\d{2})\b/);
+    const year = yearMatch ? yearMatch[1] : null;
+
+    title = title.replace(/[\-\[\]\(\)]/g, " ").replace(/\s+/g, " ").trim();
+    return { title: title || name, year };
+}
+
 // Recherche TMDB robuste pour l'affichage en français
 async function getTmdbMetadata(filename, type, tmdbKey) {
     try {
-        let cleanName = filename
-            .replace(/\.(mp4|mkv|avi|mov)$/i, "")
-            .replace(/[\.\_]/g, " ")
-            .replace(/(bluray|1080p|720p|4k|x264|h264|x265|hevc|vostfr|multi|french|truefrench)/gi, "")
-            .trim();
-
+        const { title: cleanName, year } = extractCleanTitle(filename);
         const tmdbType = (type === "movie") ? "movie" : "tv";
-        const url = `https://api.themoviedb.org/3/search/${tmdbType}?api_key=${tmdbKey}&query=${encodeURIComponent(cleanName)}&language=fr-FR`;
-        const res = await axios.get(url);
+        const yearParam = year ? `&${type === "movie" ? "year" : "first_air_date_year"}=${year}` : "";
+        const url = `https://api.themoviedb.org/3/search/${tmdbType}?api_key=${tmdbKey}&query=${encodeURIComponent(cleanName)}${yearParam}&language=fr-FR`;
+        let res = await axios.get(url);
+
+        // Si la recherche avec année ne donne rien, on retente sans année (au cas où elle serait mal extraite)
+        if ((!res.data || !res.data.results || res.data.results.length === 0) && year) {
+            const urlNoYear = `https://api.themoviedb.org/3/search/${tmdbType}?api_key=${tmdbKey}&query=${encodeURIComponent(cleanName)}&language=fr-FR`;
+            res = await axios.get(urlNoYear);
+        }
 
         if (res.data && res.data.results && res.data.results.length > 0) {
             const first = res.data.results[0];
@@ -227,32 +257,32 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/catalog/:type/:id.json", async (req, res) 
             return res.json({ metas: metas });
         }
 
-        let metas = [];
-        const itemsToProcess = magnets.slice(0, 15);
-
-        for (const item of itemsToProcess) {
+        // On filtre d'abord TOUS les torrents qui correspondent à ce catalogue (plus de limite à 15),
+        // puis on résout leurs métadonnées TMDB en parallèle pour rester sous la limite de temps de Vercel.
+        const matched = [];
+        for (const item of magnets) {
             const title = (item.filename || "").toLowerCase();
             const isAnime = title.includes("vostfr") || (title.includes("[") && title.includes("]"));
             const isSeries = title.match(/s\d{1,2}e\d{1,3}/) || title.match(/\bs\d{1,2}\b/) || title.includes("season") || title.includes("saison") || item.statusCode === 3;
 
-            let match = false;
-            let currentType = "movie";
-
-            if (id === "my_ad_animes" && isAnime) { match = true; currentType = "series"; }
-            else if (id === "my_ad_series" && isSeries && !isAnime) { match = true; currentType = "series"; }
-            else if (id === "my_ad_movies" && !isSeries && !isAnime) { match = true; currentType = "movie"; }
-
-            if (match) {
-                const tmdb = await getTmdbMetadata(item.filename, currentType, tmdbKey);
-                metas.push({
-                    id: `ad_cloud:${item.id}`,
-                    type: type,
-                    name: tmdb.name,
-                    poster: tmdb.poster,
-                    description: tmdb.description
-                });
-            }
+            if (id === "my_ad_animes" && isAnime) matched.push({ item, currentType: "series" });
+            else if (id === "my_ad_series" && isSeries && !isAnime) matched.push({ item, currentType: "series" });
+            else if (id === "my_ad_movies" && !isSeries && !isAnime) matched.push({ item, currentType: "movie" });
         }
+
+        // Cap raisonnable pour éviter un timeout Vercel (fonctions gratuites limitées en durée) et le rate-limit TMDB
+        const itemsToProcess = matched.slice(0, 60);
+
+        const metas = await Promise.all(itemsToProcess.map(async ({ item, currentType }) => {
+            const tmdb = await getTmdbMetadata(item.filename, currentType, tmdbKey);
+            return {
+                id: `ad_cloud:${item.id}`,
+                type: type,
+                name: tmdb.name,
+                poster: tmdb.poster,
+                description: tmdb.description
+            };
+        }));
         res.json({ metas: metas });
     } catch (err) {
         console.error("Erreur catalog:", err.response ? JSON.stringify(err.response.data) : err.message);
@@ -269,8 +299,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
         if (id && id.startsWith("ad_cloud:")) {
             // Fichier déjà présent dans le cloud Alldebrid : on récupère son arborescence de fichiers/liens
             const magnetId = id.replace("ad_cloud:", "");
-            const filesUrl = `${AD_BASE}/magnet/files?id[]=${magnetId}`;
-            const filesRes = await axios.get(filesUrl, { headers: adHeaders(apiKey) });
+            const filesRes = await adPost(`${AD_BASE}/magnet/files`, apiKey, [["id[]", magnetId]]);
 
             const magnetData = filesRes.data && filesRes.data.data && filesRes.data.data.magnets && filesRes.data.data.magnets[0];
 
@@ -278,8 +307,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
                 const files = flattenFiles(magnetData.files);
                 for (const file of files) {
                     if (!file.l) continue;
-                    const unlockUrl = `${AD_BASE}/link/unlock?link=${encodeURIComponent(file.l)}`;
-                    const unlockRes = await axios.get(unlockUrl, { headers: adHeaders(apiKey) }).catch((e) => {
+                    const unlockRes = await adPost(`${AD_BASE}/link/unlock`, apiKey, [["link", file.l]]).catch((e) => {
                         console.error("Erreur unlock:", e.response ? JSON.stringify(e.response.data) : e.message);
                         return null;
                     });
@@ -301,9 +329,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
                 const hashes = [...new Set(torrentioRes.data.streams.map(s => s.infoHash).filter(Boolean))].slice(0, 10);
 
                 if (hashes.length > 0) {
-                    const params = hashes.map(h => `magnets[]=${encodeURIComponent(h)}`).join("&");
-                    const uploadUrl = `${AD_BASE}/magnet/upload?${params}`;
-                    const uploadRes = await axios.get(uploadUrl, { headers: adHeaders(apiKey) }).catch((e) => {
+                    const uploadRes = await adPost(`${AD_BASE}/magnet/upload`, apiKey, hashes.map(h => ["magnets[]", h])).catch((e) => {
                         console.error("Erreur magnet/upload:", e.response ? JSON.stringify(e.response.data) : e.message);
                         return null;
                     });
@@ -312,15 +338,14 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
                     const readyIds = (uploadedMagnets || []).filter(m => m.ready && m.id).map(m => m.id);
 
                     for (const magId of readyIds) {
-                        const filesRes = await axios.get(`${AD_BASE}/magnet/files?id[]=${magId}`, { headers: adHeaders(apiKey) }).catch(() => null);
+                        const filesRes = await adPost(`${AD_BASE}/magnet/files`, apiKey, [["id[]", magId]]).catch(() => null);
                         const magnetData = filesRes && filesRes.data && filesRes.data.data && filesRes.data.data.magnets && filesRes.data.data.magnets[0];
                         if (!magnetData || !magnetData.files) continue;
 
                         const files = flattenFiles(magnetData.files);
                         for (const file of files) {
                             if (!file.l) continue;
-                            const unlockUrl = `${AD_BASE}/link/unlock?link=${encodeURIComponent(file.l)}`;
-                            const unlockRes = await axios.get(unlockUrl, { headers: adHeaders(apiKey) }).catch(() => null);
+                            const unlockRes = await adPost(`${AD_BASE}/link/unlock`, apiKey, [["link", file.l]]).catch(() => null);
                             if (unlockRes && unlockRes.data && unlockRes.data.status === "success" && unlockRes.data.data && unlockRes.data.data.link) {
                                 streams.push({
                                     name: "Cache Global ⚡",
