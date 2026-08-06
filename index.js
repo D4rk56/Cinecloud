@@ -10,7 +10,8 @@ app.use((req, res, next) => {
     next();
 });
 
-const TMDB_KEY = "14cc580302bf1c4161bf96efb2165215";
+// Clé TMDB par défaut, utilisée si l'utilisateur ne fournit pas la sienne sur la page d'accueil.
+const TMDB_KEY_DEFAULT = "14cc580302bf1c4161bf96efb2165215";
 const AD_BASE = "https://api.alldebrid.com/v4";
 const AD_BASE_V41 = "https://api.alldebrid.com/v4.1";
 
@@ -32,7 +33,7 @@ function flattenFiles(entries) {
 }
 
 // Recherche TMDB robuste pour l'affichage en français
-async function getTmdbMetadata(filename, type) {
+async function getTmdbMetadata(filename, type, tmdbKey) {
     try {
         let cleanName = filename
             .replace(/\.(mp4|mkv|avi|mov)$/i, "")
@@ -41,7 +42,7 @@ async function getTmdbMetadata(filename, type) {
             .trim();
 
         const tmdbType = (type === "movie") ? "movie" : "tv";
-        const url = `https://api.themoviedb.org/3/search/${tmdbType}?api_key=${TMDB_KEY}&query=${encodeURIComponent(cleanName)}&language=fr-FR`;
+        const url = `https://api.themoviedb.org/3/search/${tmdbType}?api_key=${tmdbKey}&query=${encodeURIComponent(cleanName)}&language=fr-FR`;
         const res = await axios.get(url);
 
         if (res.data && res.data.results && res.data.results.length > 0) {
@@ -53,7 +54,7 @@ async function getTmdbMetadata(filename, type) {
             };
         }
     } catch (e) {
-        console.error("Erreur TMDB:", e.message);
+        console.error("Erreur TMDB:", e.response ? `HTTP ${e.response.status} - ${JSON.stringify(e.response.data)}` : e.message);
     }
     return { name: filename, poster: "https://placehold.co/300x450", description: "Fichier Cloud Alldebrid" };
 }
@@ -65,6 +66,8 @@ app.get("/", (req, res) => {
             <h2 style="color:#e50914;">Mon Cloud Alldebrid Organisé</h2>
             <p style="color:#333;">Entre ta clé API Alldebrid pour générer le lien de ton addon.</p>
             <input type="text" id="key" placeholder="Ta clé API Alldebrid" style="width:100%; padding:12px; margin-bottom:15px; border:1px solid #ccc; border-radius:5px; box-sizing:border-box;"><br>
+            <input type="text" id="tmdbKey" placeholder="Ta clé API TMDB (optionnel)" style="width:100%; padding:12px; margin-bottom:5px; border:1px solid #ccc; border-radius:5px; box-sizing:border-box;"><br>
+            <p style="margin:0 0 15px 0; font-size:12px; color:#888; text-align:left;">Laisse vide pour utiliser la clé par défaut. Clé gratuite sur <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org/settings/api</a>.</p>
             <button onclick="generate()" style="padding:12px 20px; background:#e50914; color:white; border:none; border-radius:5px; width:100%; font-weight:bold; cursor:pointer;">Générer le lien Nuvio</button>
             <div id="box" style="display:none; margin-top:25px; padding:15px; background:#fff; border:1px dashed #007bff; border-radius:5px;">
                 <p style="margin:0 0 10px 0; font-size:14px; color:#555;">Copie ce lien et colle-le dans Nuvio :</p>
@@ -74,8 +77,9 @@ app.get("/", (req, res) => {
         <script>
             function generate() {
                 const key = document.getElementById("key").value.trim();
+                const tmdbKey = document.getElementById("tmdbKey").value.trim();
                 if(!key) return alert("Veuillez entrer une clé valide");
-                const link = window.location.origin + "/" + key + "/manifest.json";
+                const link = window.location.origin + "/" + key + "/" + (tmdbKey || "default") + "/manifest.json";
                 document.getElementById("box").style.display = "block";
                 document.getElementById("result").innerText = link;
             }
@@ -84,10 +88,10 @@ app.get("/", (req, res) => {
 });
 
 // Le Manifeste officiel pour Nuvio
-app.get("/:apiKey/manifest.json", (req, res) => {
+app.get("/:apiKey/:tmdbKey/manifest.json", (req, res) => {
     res.json({
         id: "org.nuviofork.alldebrid.addon",
-        version: "6.6.3",
+        version: "6.6.4",
         name: "Cloud Alldebrid Organisé",
         description: "Affiche tes torrents Alldebrid triés en Films, Séries et Animes avec synopsis FR.",
         resources: ["catalog", "stream"],
@@ -102,8 +106,9 @@ app.get("/:apiKey/manifest.json", (req, res) => {
 });
 
 // Le Gestionnaire de Catalogues
-app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
+app.get("/:apiKey/:tmdbKey/catalog/:type/:id.json", async (req, res) => {
     const { apiKey, id, type } = req.params;
+    const tmdbKey = (req.params.tmdbKey && req.params.tmdbKey !== "default") ? req.params.tmdbKey : TMDB_KEY_DEFAULT;
     try {
         // Nouvelle API : /v4.1/magnet/status + auth via header Authorization Bearer
         const url = `${AD_BASE_V41}/magnet/status`;
@@ -121,7 +126,7 @@ app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
         for (const item of itemsToProcess) {
             const title = (item.filename || "").toLowerCase();
             const isAnime = title.includes("vostfr") || (title.includes("[") && title.includes("]"));
-            const isSeries = title.match(/s\d+e\d+/) || title.includes("season") || item.statusCode === 3;
+            const isSeries = title.match(/s\d{1,2}e\d{1,3}/) || title.match(/\bs\d{1,2}\b/) || title.includes("season") || title.includes("saison") || item.statusCode === 3;
 
             let match = false;
             let currentType = "movie";
@@ -131,7 +136,7 @@ app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
             else if (id === "my_ad_movies" && !isSeries && !isAnime) { match = true; currentType = "movie"; }
 
             if (match) {
-                const tmdb = await getTmdbMetadata(item.filename, currentType);
+                const tmdb = await getTmdbMetadata(item.filename, currentType, tmdbKey);
                 metas.push({
                     id: `ad_cloud:${item.id}`,
                     type: type,
@@ -149,7 +154,7 @@ app.get("/:apiKey/catalog/:type/:id.json", async (req, res) => {
 });
 
 // Le Gestionnaire de Streams
-app.get("/:apiKey/stream/:type/:id.json", async (req, res) => {
+app.get("/:apiKey/:tmdbKey/stream/:type/:id.json", async (req, res) => {
     const { apiKey, type, id } = req.params;
     let streams = [];
     try {
