@@ -118,6 +118,10 @@ app.get("/", (req, res) => {
             <input type="text" id="key" placeholder="Ta clé API Alldebrid" style="width:100%; padding:12px; margin-bottom:15px; border:1px solid #ccc; border-radius:5px; box-sizing:border-box;"><br>
             <input type="text" id="tmdbKey" placeholder="Ta clé API TMDB (optionnel)" style="width:100%; padding:12px; margin-bottom:5px; border:1px solid #ccc; border-radius:5px; box-sizing:border-box;"><br>
             <p style="margin:0 0 15px 0; font-size:12px; color:#888; text-align:left;">Laisse vide pour utiliser la clé par défaut. Clé gratuite sur <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org/settings/api</a>.</p>
+            <label style="display:flex; align-items:center; gap:8px; margin-bottom:15px; font-size:13px; color:#333; text-align:left;">
+                <input type="checkbox" id="cacheToggle" checked style="width:16px; height:16px;">
+                Activer le Cache Global (torrents publics en cache Alldebrid — ajoute les magnets vérifiés à ton compte)
+            </label>
             <button onclick="generate()" style="padding:12px 20px; background:#e50914; color:white; border:none; border-radius:5px; width:100%; font-weight:bold; cursor:pointer;">Générer le lien Nuvio</button>
             <div id="box" style="display:none; margin-top:25px; padding:15px; background:#fff; border:1px dashed #007bff; border-radius:5px;">
                 <p style="margin:0 0 10px 0; font-size:14px; color:#555;">Copie ce lien et colle-le dans Nuvio :</p>
@@ -128,8 +132,9 @@ app.get("/", (req, res) => {
             function generate() {
                 const key = document.getElementById("key").value.trim();
                 const tmdbKey = document.getElementById("tmdbKey").value.trim();
+                const cacheOn = document.getElementById("cacheToggle").checked;
                 if(!key) return alert("Veuillez entrer une clé valide");
-                const link = window.location.origin + "/" + key + "/" + (tmdbKey || "default") + "/manifest.json";
+                const link = window.location.origin + "/" + key + "/" + (tmdbKey || "default") + "/" + (cacheOn ? "on" : "off") + "/manifest.json";
                 document.getElementById("box").style.display = "block";
                 document.getElementById("result").innerText = link;
             }
@@ -138,12 +143,12 @@ app.get("/", (req, res) => {
 });
 
 // Le Manifeste officiel pour Nuvio
-app.get("/:apiKey/:tmdbKey/manifest.json", (req, res) => {
+app.get("/:apiKey/:tmdbKey/:cacheMode/manifest.json", (req, res) => {
     res.json({
         id: "org.nuviofork.alldebrid.addon",
-        version: "6.7.0",
+        version: "6.8.0",
         name: "Cloud Alldebrid Organisé",
-        description: "Affiche tes torrents Alldebrid triés en Films, Séries et Animes avec synopsis FR.",
+        description: "Affiche tes torrents Alldebrid triés en Films, Séries et Animes avec synopsis FR, plus des recommandations.",
         resources: [
             "catalog",
             { name: "meta", types: ["movie", "series"], idPrefixes: ["ad_cloud:"] },
@@ -153,7 +158,9 @@ app.get("/:apiKey/:tmdbKey/manifest.json", (req, res) => {
         catalogs: [
             { type: "movie", id: "my_ad_movies", name: "Mes Films Alldebrid" },
             { type: "series", id: "my_ad_series", name: "Mes Séries Alldebrid" },
-            { type: "series", id: "my_ad_animes", name: "Mes Animes Alldebrid" }
+            { type: "series", id: "my_ad_animes", name: "Mes Animes Alldebrid" },
+            { type: "movie", id: "my_ad_reco_movies", name: "Recommandations Films" },
+            { type: "series", id: "my_ad_reco_series", name: "Recommandations Séries" }
         ],
         idPrefixes: ["ad_cloud:", "tt"]
     });
@@ -161,7 +168,7 @@ app.get("/:apiKey/:tmdbKey/manifest.json", (req, res) => {
 
 // Le Gestionnaire de Métadonnées (page de détails) — nécessaire pour nos propres ids ad_cloud:,
 // que ni AIOMetadata ni Cinemeta ne peuvent résoudre puisqu'ils ne les connaissent pas.
-app.get("/:apiKey/:tmdbKey/meta/:type/:id.json", async (req, res) => {
+app.get("/:apiKey/:tmdbKey/:cacheMode/meta/:type/:id.json", async (req, res) => {
     const { apiKey, id, type } = req.params;
     const tmdbKey = (req.params.tmdbKey && req.params.tmdbKey !== "default") ? req.params.tmdbKey : TMDB_KEY_DEFAULT;
     try {
@@ -193,7 +200,7 @@ app.get("/:apiKey/:tmdbKey/meta/:type/:id.json", async (req, res) => {
 });
 
 // Le Gestionnaire de Catalogues
-app.get("/:apiKey/:tmdbKey/catalog/:type/:id.json", async (req, res) => {
+app.get("/:apiKey/:tmdbKey/:cacheMode/catalog/:type/:id.json", async (req, res) => {
     const { apiKey, id, type } = req.params;
     const tmdbKey = (req.params.tmdbKey && req.params.tmdbKey !== "default") ? req.params.tmdbKey : TMDB_KEY_DEFAULT;
     try {
@@ -207,6 +214,19 @@ app.get("/:apiKey/:tmdbKey/catalog/:type/:id.json", async (req, res) => {
         }
 
         const magnets = response.data.data.magnets;
+
+        // Catalogues de recommandations : basés sur les genres dominants de la bibliothèque existante
+        if (id === "my_ad_reco_movies" || id === "my_ad_reco_series") {
+            const wantSeries = (id === "my_ad_reco_series");
+            const relevant = magnets.filter(item => {
+                const title = (item.filename || "").toLowerCase();
+                const isSeries = title.match(/s\d{1,2}e\d{1,3}/) || title.match(/\bs\d{1,2}\b/) || title.includes("season") || title.includes("saison") || item.statusCode === 3;
+                return wantSeries ? isSeries : !isSeries;
+            });
+            const metas = await getRecommendations(relevant, wantSeries ? "series" : "movie", tmdbKey);
+            return res.json({ metas: metas });
+        }
+
         let metas = [];
         const itemsToProcess = magnets.slice(0, 15);
 
@@ -241,8 +261,9 @@ app.get("/:apiKey/:tmdbKey/catalog/:type/:id.json", async (req, res) => {
 });
 
 // Le Gestionnaire de Streams
-app.get("/:apiKey/:tmdbKey/stream/:type/:id.json", async (req, res) => {
-    const { apiKey, type, id } = req.params;
+app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) => {
+    const { apiKey, type, id, cacheMode } = req.params;
+    const cacheEnabled = cacheMode !== "off";
     let streams = [];
     try {
         if (id && id.startsWith("ad_cloud:")) {
@@ -267,7 +288,7 @@ app.get("/:apiKey/:tmdbKey/stream/:type/:id.json", async (req, res) => {
                     }
                 }
             }
-        } else {
+        } else if (cacheEnabled) {
             // Recherche via Torrentio, puis on "upload" les magnets trouvés sur Alldebrid.
             // Si le magnet est déjà en cache côté Alldebrid (ready:true), le lien est instantané —
             // sinon Alldebrid commence à le télécharger sur ses serveurs (pas sur les tiens).
