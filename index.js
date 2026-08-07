@@ -451,7 +451,8 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
                 const hashes = [...new Set(torrentioRes.data.streams.map(s => s.infoHash).filter(Boolean))].slice(0, 10);
 
                 if (hashes.length > 0) {
-                    const uploadRes = await adPost(`${AD_BASE}/magnet/upload`, apiKey, hashes.map(h => ["magnets[]", h])).catch((e) => {
+                    const uploadParams = hashes.map(h => `magnets[]=${encodeURIComponent(h)}`).join("&");
+                    const uploadRes = await axios.get(`${AD_BASE}/magnet/upload?${uploadParams}`, { headers: adHeaders(apiKey) }).catch((e) => {
                         console.error("Erreur magnet/upload:", e.response ? JSON.stringify(e.response.data) : e.message);
                         return null;
                     });
