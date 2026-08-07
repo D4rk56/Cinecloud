@@ -1,12 +1,14 @@
 const express = require("express");
 const axios = require("axios");
 const app = express();
+app.set("etag", false); // Désactive la génération d'ETag par Express (source des réponses 304 observées)
 
 // Configuration des CORS obligatoires pour Nuvio
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "*");
     res.setHeader("Access-Control-Allow-Methods", "*");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     next();
 });
 
@@ -38,6 +40,13 @@ async function adPost(url, apiKey, formEntries) {
 function flattenFiles(entries) {
     if (!Array.isArray(entries)) return [];
     return entries.flatMap(e => (e.e ? flattenFiles(e.e) : [e]));
+}
+
+// Extrait le numéro de saison/épisode d'un nom de fichier (format S01E05, S1E5, etc.)
+function parseSeasonEpisode(filename) {
+    const match = filename.match(/S(\d{1,2})E(\d{1,3})/i);
+    if (!match) return null;
+    return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
 }
 
 // Nettoyage robuste : on coupe le nom au premier marqueur technique (année, qualité, codec...)
@@ -201,8 +210,8 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/manifest.json", (req, res) => {
         description: "Affiche tes torrents Alldebrid triés en Films, Séries et Animes avec synopsis FR, plus des recommandations.",
         resources: [
             "catalog",
-            { name: "meta", types: ["movie", "series"], idPrefixes: ["ad_cloud:"] },
-            { name: "stream", types: ["movie", "series"], idPrefixes: ["ad_cloud:", "tt"] }
+            { name: "meta", types: ["movie", "series"], idPrefixes: ["ad_cloud:", "ad_series:"] },
+            { name: "stream", types: ["movie", "series"], idPrefixes: ["ad_cloud:", "ad_series:", "tt"] }
         ],
         types: ["movie", "series"],
         catalogs: [
@@ -212,7 +221,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/manifest.json", (req, res) => {
             { type: "movie", id: "my_ad_reco_movies", name: "Recommandations Films" },
             { type: "series", id: "my_ad_reco_series", name: "Recommandations Séries" }
         ],
-        idPrefixes: ["ad_cloud:", "tt"]
+        idPrefixes: ["ad_cloud:", "ad_series:", "tt"]
     });
 });
 
@@ -222,6 +231,43 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/meta/:type/:id.json", async (req, res) => 
     const { apiKey, id, type } = req.params;
     const tmdbKey = (req.params.tmdbKey && req.params.tmdbKey !== "default") ? req.params.tmdbKey : TMDB_KEY_DEFAULT;
     try {
+        if (id.startsWith("ad_series:")) {
+            // Fiche d'une série : on reconstruit la liste d'épisodes à partir du compte Alldebrid actuel
+            const groupTitle = decodeURIComponent(id.replace("ad_series:", ""));
+            const statusRes = await axios.get(`${AD_BASE_V41}/magnet/status`, { headers: adHeaders(apiKey) });
+            const magnets = (statusRes.data && statusRes.data.data && statusRes.data.data.magnets) || [];
+
+            const episodes = magnets.filter(m => extractCleanTitle(m.filename || "").title.toLowerCase() === groupTitle.toLowerCase());
+            if (episodes.length === 0) return res.json({ meta: null });
+
+            const tmdb = await getTmdbMetadata(episodes[0].filename, "series", tmdbKey, true);
+            const videos = episodes.map(ep => {
+                const se = parseSeasonEpisode(ep.filename) || { season: 1, episode: 1 };
+                return {
+                    id: `ad_series:${encodeURIComponent(groupTitle)}:${se.season}:${se.episode}`,
+                    title: `S${se.season}E${se.episode}`,
+                    season: se.season,
+                    episode: se.episode,
+                    released: new Date(2020, 0, 1).toISOString()
+                };
+            }).sort((a, b) => a.season - b.season || a.episode - b.episode);
+
+            return res.json({
+                meta: {
+                    id: id,
+                    type: "series",
+                    name: tmdb.name,
+                    poster: tmdb.poster,
+                    background: tmdb.poster,
+                    description: tmdb.description,
+                    genres: tmdb.genres,
+                    cast: tmdb.cast,
+                    imdbRating: tmdb.imdbRating,
+                    videos: videos
+                }
+            });
+        }
+
         if (!id.startsWith("ad_cloud:")) return res.json({ meta: null });
         const magnetId = id.replace("ad_cloud:", "");
         const statusRes = await axios.get(`${AD_BASE_V41}/magnet/status`, {
@@ -280,8 +326,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/catalog/:type/:id.json", async (req, res) 
             return res.json({ metas: metas });
         }
 
-        // On filtre d'abord TOUS les torrents qui correspondent à ce catalogue (plus de limite à 15),
-        // puis on résout leurs métadonnées TMDB en parallèle pour rester sous la limite de temps de Vercel.
+        // On filtre d'abord TOUS les torrents qui correspondent à ce catalogue (plus de limite à 15).
         const matched = [];
         for (const item of magnets) {
             const title = (item.filename || "").toLowerCase();
@@ -293,19 +338,40 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/catalog/:type/:id.json", async (req, res) 
             else if (id === "my_ad_movies" && !isSeries && !isAnime) matched.push({ item, currentType: "movie" });
         }
 
-        // Cap raisonnable pour éviter un timeout Vercel (fonctions gratuites limitées en durée) et le rate-limit TMDB
-        const itemsToProcess = matched.slice(0, 60);
-
-        const metas = await Promise.all(itemsToProcess.map(async ({ item, currentType }) => {
-            const tmdb = await getTmdbMetadata(item.filename, currentType, tmdbKey);
-            return {
-                id: `ad_cloud:${item.id}`,
-                type: type,
-                name: tmdb.name,
-                poster: tmdb.poster,
-                description: tmdb.description
-            };
-        }));
+        let metas;
+        if (id === "my_ad_series" || id === "my_ad_animes") {
+            // Regroupement par titre de série : un seul item par série, les épisodes iront dans la fiche détails
+            const groups = new Map();
+            for (const { item } of matched) {
+                const groupTitle = extractCleanTitle(item.filename).title.toLowerCase();
+                if (!groups.has(groupTitle)) groups.set(groupTitle, []);
+                groups.get(groupTitle).push(item);
+            }
+            const groupList = [...groups.entries()].slice(0, 60);
+            metas = await Promise.all(groupList.map(async ([groupTitle, episodes]) => {
+                const tmdb = await getTmdbMetadata(episodes[0].filename, "series", tmdbKey);
+                return {
+                    id: `ad_series:${encodeURIComponent(groupTitle)}`,
+                    type: type,
+                    name: tmdb.name,
+                    poster: tmdb.poster,
+                    description: tmdb.description
+                };
+            }));
+        } else {
+            // Cap raisonnable pour éviter un timeout Vercel (fonctions gratuites limitées en durée) et le rate-limit TMDB
+            const itemsToProcess = matched.slice(0, 60);
+            metas = await Promise.all(itemsToProcess.map(async ({ item, currentType }) => {
+                const tmdb = await getTmdbMetadata(item.filename, currentType, tmdbKey);
+                return {
+                    id: `ad_cloud:${item.id}`,
+                    type: type,
+                    name: tmdb.name,
+                    poster: tmdb.poster,
+                    description: tmdb.description
+                };
+            }));
+        }
         res.json({ metas: metas });
     } catch (err) {
         console.error("Erreur catalog:", err.response ? JSON.stringify(err.response.data) : err.message);
@@ -319,9 +385,28 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
     const cacheEnabled = cacheMode !== "off";
     let streams = [];
     try {
-        if (id && id.startsWith("ad_cloud:")) {
+        let resolvedId = id;
+
+        if (id && id.startsWith("ad_series:")) {
+            // Format attendu : ad_series:<titre encodé>:<saison>:<episode>
+            const parts = id.replace("ad_series:", "").split(":");
+            const episode = parseInt(parts.pop(), 10);
+            const season = parseInt(parts.pop(), 10);
+            const groupTitle = decodeURIComponent(parts.join(":"));
+
+            const statusRes = await axios.get(`${AD_BASE_V41}/magnet/status`, { headers: adHeaders(apiKey) }).catch(() => null);
+            const magnets = (statusRes && statusRes.data && statusRes.data.data && statusRes.data.data.magnets) || [];
+            const match = magnets.find(m => {
+                if (extractCleanTitle(m.filename || "").title.toLowerCase() !== groupTitle.toLowerCase()) return false;
+                const se = parseSeasonEpisode(m.filename || "");
+                return se && se.season === season && se.episode === episode;
+            });
+            resolvedId = match ? `ad_cloud:${match.id}` : null;
+        }
+
+        if (resolvedId && resolvedId.startsWith("ad_cloud:")) {
             // Fichier déjà présent dans le cloud Alldebrid : on récupère son arborescence de fichiers/liens
-            const magnetId = id.replace("ad_cloud:", "");
+            const magnetId = resolvedId.replace("ad_cloud:", "");
             const filesRes = await adPost(`${AD_BASE}/magnet/files`, apiKey, [["id[]", magnetId]]).catch((e) => {
                 console.error("Erreur magnet/files:", e.response ? JSON.stringify(e.response.data) : e.message);
                 return null;
@@ -340,6 +425,8 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
                         console.error("Erreur unlock:", e.response ? JSON.stringify(e.response.data) : e.message);
                         return null;
                     });
+                    // LOG DIAGNOSTIC TEMPORAIRE — dernière étape encore non vérifiée
+                    console.log("DEBUG link/unlock:", unlockRes ? JSON.stringify(unlockRes.data).slice(0, 1000) : "pas de réponse");
                     if (unlockRes && unlockRes.data && unlockRes.data.status === "success" && unlockRes.data.data && unlockRes.data.data.link) {
                         streams.push({ name: "Mon Cloud ☁️", title: file.n, url: unlockRes.data.data.link });
                     }
