@@ -61,7 +61,7 @@ function extractCleanTitle(filename) {
 }
 
 // Recherche TMDB robuste pour l'affichage en français
-async function getTmdbMetadata(filename, type, tmdbKey) {
+async function getTmdbMetadata(filename, type, tmdbKey, detailed = false) {
     try {
         const { title: cleanName, year } = extractCleanTitle(filename);
         const tmdbType = (type === "movie") ? "movie" : "tv";
@@ -77,18 +77,38 @@ async function getTmdbMetadata(filename, type, tmdbKey) {
 
         if (res.data && res.data.results && res.data.results.length > 0) {
             const first = res.data.results[0];
+
+            // On récupère en plus le casting et les noms de genres (au lieu des seuls ids),
+            // uniquement quand demandé explicitement (page de détails), pour ne pas doubler
+            // le nombre d'appels TMDB sur les listes de catalogue.
+            let cast = [];
+            let genreNames = [];
+            if (detailed) {
+                try {
+                    const detailUrl = `https://api.themoviedb.org/3/${tmdbType}/${first.id}?api_key=${tmdbKey}&language=fr-FR&append_to_response=credits`;
+                    const detailRes = await axios.get(detailUrl);
+                    if (detailRes.data) {
+                        genreNames = (detailRes.data.genres || []).map(g => g.name);
+                        cast = ((detailRes.data.credits && detailRes.data.credits.cast) || []).slice(0, 8).map(c => c.name);
+                    }
+                } catch (e) { /* pas bloquant si ça échoue, on garde le reste des métadonnées */ }
+            }
+
             return {
                 name: first.title || first.name || filename,
                 poster: first.poster_path ? `https://image.tmdb.org/t/p/w500${first.poster_path}` : "https://placehold.co/300x450",
                 description: first.overview || "Disponible dans ton Cloud Alldebrid.",
                 genreIds: first.genre_ids || [],
+                genres: genreNames,
+                cast: cast,
+                imdbRating: first.vote_average ? first.vote_average.toFixed(1) : null,
                 tmdbId: first.id
             };
         }
     } catch (e) {
         console.error("Erreur TMDB:", e.response ? `HTTP ${e.response.status} - ${JSON.stringify(e.response.data)}` : e.message);
     }
-    return { name: filename, poster: "https://placehold.co/300x450", description: "Fichier Cloud Alldebrid", genreIds: [], tmdbId: null };
+    return { name: filename, poster: "https://placehold.co/300x450", description: "Fichier Cloud Alldebrid", genreIds: [], genres: [], cast: [], imdbRating: null, tmdbId: null };
 }
 
 // Convertit un id TMDB en id IMDb ("tt...") pour que Cinemeta/AIOMetadata sachent résoudre les métadonnées
@@ -212,7 +232,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/meta/:type/:id.json", async (req, res) => 
         const magnet = Array.isArray(magnetData) ? magnetData[0] : magnetData;
         if (!magnet || !magnet.filename) return res.json({ meta: null });
 
-        const tmdb = await getTmdbMetadata(magnet.filename, type, tmdbKey);
+        const tmdb = await getTmdbMetadata(magnet.filename, type, tmdbKey, true);
         res.json({
             meta: {
                 id: id,
@@ -220,7 +240,10 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/meta/:type/:id.json", async (req, res) => 
                 name: tmdb.name,
                 poster: tmdb.poster,
                 background: tmdb.poster,
-                description: tmdb.description
+                description: tmdb.description,
+                genres: tmdb.genres,
+                cast: tmdb.cast,
+                imdbRating: tmdb.imdbRating
             }
         });
     } catch (err) {
@@ -262,7 +285,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/catalog/:type/:id.json", async (req, res) 
         const matched = [];
         for (const item of magnets) {
             const title = (item.filename || "").toLowerCase();
-            const isAnime = title.includes("vostfr") || (title.includes("[") && title.includes("]"));
+            const isAnime = title.includes("vostfr");
             const isSeries = title.match(/s\d{1,2}e\d{1,3}/) || title.match(/\bs\d{1,2}\b/) || title.includes("season") || title.includes("saison") || item.statusCode === 3;
 
             if (id === "my_ad_animes" && isAnime) matched.push({ item, currentType: "series" });
@@ -299,9 +322,15 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
         if (id && id.startsWith("ad_cloud:")) {
             // Fichier déjà présent dans le cloud Alldebrid : on récupère son arborescence de fichiers/liens
             const magnetId = id.replace("ad_cloud:", "");
-            const filesRes = await adPost(`${AD_BASE}/magnet/files`, apiKey, [["id[]", magnetId]]);
+            const filesRes = await adPost(`${AD_BASE}/magnet/files`, apiKey, [["id[]", magnetId]]).catch((e) => {
+                console.error("Erreur magnet/files:", e.response ? JSON.stringify(e.response.data) : e.message);
+                return null;
+            });
 
-            const magnetData = filesRes.data && filesRes.data.data && filesRes.data.data.magnets && filesRes.data.data.magnets[0];
+            // LOG DIAGNOSTIC TEMPORAIRE — à retirer une fois le format de réponse confirmé
+            console.log("DEBUG magnet/files:", filesRes ? JSON.stringify(filesRes.data).slice(0, 1500) : "pas de réponse");
+
+            const magnetData = filesRes && filesRes.data && filesRes.data.data && filesRes.data.data.magnets && filesRes.data.data.magnets[0];
 
             if (magnetData && magnetData.files) {
                 const files = flattenFiles(magnetData.files);
@@ -323,7 +352,13 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
             // NB : chaque vérification ajoute le magnet à la liste de ton compte Alldebrid
             // (limite de 30 magnets actifs). C'est le fonctionnement standard des addons debrid.
             const torrentioUrl = `https://torrentio.strem.fun/stream/${type}/${id}.json`;
-            const torrentioRes = await axios.get(torrentioUrl).catch(() => null);
+            const torrentioRes = await axios.get(torrentioUrl).catch((e) => {
+                console.error("Erreur Torrentio:", e.message);
+                return null;
+            });
+
+            // LOG DIAGNOSTIC TEMPORAIRE
+            console.log("DEBUG Torrentio streams trouvés:", torrentioRes && torrentioRes.data && torrentioRes.data.streams ? torrentioRes.data.streams.length : "0 ou erreur");
 
             if (torrentioRes && torrentioRes.data && torrentioRes.data.streams) {
                 const hashes = [...new Set(torrentioRes.data.streams.map(s => s.infoHash).filter(Boolean))].slice(0, 10);
@@ -333,6 +368,9 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/stream/:type/:id.json", async (req, res) =
                         console.error("Erreur magnet/upload:", e.response ? JSON.stringify(e.response.data) : e.message);
                         return null;
                     });
+
+                    // LOG DIAGNOSTIC TEMPORAIRE
+                    console.log("DEBUG magnet/upload:", uploadRes ? JSON.stringify(uploadRes.data).slice(0, 1500) : "pas de réponse");
 
                     const uploadedMagnets = uploadRes && uploadRes.data && uploadRes.data.data && uploadRes.data.data.magnets;
                     const readyIds = (uploadedMagnets || []).filter(m => m.ready && m.id).map(m => m.id);
