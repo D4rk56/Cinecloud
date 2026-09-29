@@ -162,7 +162,11 @@ Si vous préférez exécuter l'application directement avec Node.js :
 
 ## 🔒 Bonnes pratiques de sécurité & Performance intégrées
 
-- **Base de données SQLite intégrée (`node:sqlite`) :** Finies les écritures synchrones sur fichier JSON risquant de corrompre les données. Requêtes indexées ultra-rapides et transactions ACID.
+- **Architecture Multi-Utilisateurs & Sécurité Zéro Fuite :** L'URL du manifeste n'expose plus vos clés API en clair dans le chemin (`/:uuid/manifest.json`). Vos identifiants sont chiffrés au repos en **AES-256-GCM** via une clé dérivée de `APP_SECRET`. La gestion des réglages est sécurisée par un hachage de mot de passe cryptographique (`crypto.scrypt`) et protégée contre la force brute (`express-rate-limit`).
+- **Résolution de Flux "Lazy" avec Auto-Failover (< 5 ms) :** Les listes de flux Stremio sont construites instantanément en interrogeant les index locaux SQLite sans appel bloquant. La validation et le débridage se font à la volée lors de la lecture (`/resolve/:uuid/:imdbId/:fileRef`). Si un lien est mort (404/410), il est automatiquement purgé de la base et le meilleur candidat suivant prend le relais de manière transparente.
+- **Découplage Prowlarr & Worker RSS :** Plus aucun appel Prowlarr synchrone ne ralentit la navigation. Un worker d'arrière-plan synchronise périodiquement les releases Newznab (catégories 2000/5000), vérifie l'instantanéité par lot auprès d'AllDebrid et alimente la table `cached_torrents`.
+- **Isolation Stricte du Proxy WARP :** Le proxy WARP est strictement isolé pour les requêtes à `api.alldebrid.com`. Les appels à TMDB, Cinemeta, Torrentio et Prowlarr s'effectuent en accès direct, éliminant tout ralentissement ou log verbeux.
+- **Base de données SQLite intégrée (`node:sqlite`) :** Mode WAL, normal synchronous et `busy_timeout=5000` pour une réactivité maximale et zéro corruption.
 - **Utilisateur non-root (`node`) :** Le conteneur s'exécute sous le compte utilisateur restreint `node` (UID 1000) et non en tant que `root`.
 - **Image minimale & moderne :** L'image Docker s'appuie sur `node:22-alpine` pour limiter la surface d'attaque et intégrer nativement SQLite sans dépendance de compilation C++.
 - **Dépendances de production :** Seules les dépendances nécessaires au fonctionnement en production (`--omit=dev`) sont installées.

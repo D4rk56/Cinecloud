@@ -39,6 +39,11 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - WARP_PROXY=http://warp:1080
+      # Clé secrète de chiffrement AES-256-GCM (auto-générée si omise)
+      # - APP_SECRET=changez_ce_secret_pour_la_production
+      # Synchronisation RSS d'arrière-plan Prowlarr (optionnel)
+      # - PROWLARR_URL=http://prowlarr:9696
+      # - PROWLARR_KEY=votre_cle_api_prowlarr
     depends_on:
       warp:
         condition: service_healthy
