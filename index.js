@@ -36,6 +36,31 @@ if (proxyUrl) {
         axios.defaults.httpsAgent = agent;
         axios.defaults.httpAgent = agent;
         console.log(`[Proxy] Requêtes sortantes routées via : ${proxyUrl.replace(/:\/\/.*@/, "://***@")}`);
+
+        // Intercepteur de résilience : si le proxy est inaccessible (ENOTFOUND, ECONNREFUSED, etc.),
+        // bascule automatiquement sur une connexion directe pour éviter d'interrompre l'addon.
+        axios.interceptors.response.use(
+            (response) => response,
+            async (error) => {
+                const config = error.config;
+                if (!config || config._retriedDirect) {
+                    return Promise.reject(error);
+                }
+                const isProxyError = error.code === "ENOTFOUND" ||
+                                     error.code === "ECONNREFUSED" ||
+                                     error.code === "EHOSTUNREACH" ||
+                                     (error.message && (error.message.includes("ENOTFOUND") || error.message.includes("ECONNREFUSED")));
+                if (isProxyError) {
+                    console.warn(`[Proxy] Proxy inaccessible (${proxyUrl}) pour ${config.url || "requête"}. Bascule automatique en direct.`);
+                    config._retriedDirect = true;
+                    config.httpsAgent = false;
+                    config.httpAgent = false;
+                    config.proxy = false;
+                    return axios(config);
+                }
+                return Promise.reject(error);
+            }
+        );
     } catch (e) {
         console.error("[Proxy] Erreur lors de l'initialisation du proxy:", e.message);
     }

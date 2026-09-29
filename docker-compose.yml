@@ -13,11 +13,16 @@ services:
     volumes:
       - nuvio-warp:/var/lib/cloudflare-warp
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -x http://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 10s
+    networks:
+      default:
+        aliases:
+          - warp
+          - nuvio-warp
 
   nuvio:
     image: ghcr.io/d4rk56/nuvio-alldebrid:latest
