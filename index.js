@@ -66,6 +66,10 @@ if (proxyUrl) {
     }
 }
 
+// User-Agent de navigateur par défaut pour éviter les blocages bot Cloudflare 403 (ex: Torrentio, Cinemeta, TMDB)
+axios.defaults.headers.common["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+
 // --- Cache local persistant (SQLite natif ou repli JSON) ---
 // Mappe les vrais ids IMDb ("tt...") vers le contenu correspondant dans ton compte Alldebrid.
 // Permet une intégration TMDB/Cinemeta/MDBList/autres addons native (posters, notes, casting,
@@ -162,35 +166,61 @@ try {
 }
 
 // Proxies SQLite transparents pour conserver 100% de compatibilité avec le code existant
-const sqliteMoviesProxy = useSqlite ? new Proxy({}, {
-    get(target, prop) {
-        if (typeof prop !== "string" || prop === "then") return target[prop];
-        const rows = stmtGetMovies.all(prop);
-        if (!rows || rows.length === 0) return undefined;
-        const arr = rows.map(r => ({ alldebridId: r.alldebridId, filename: r.filename }));
-        arr.push = function(...items) {
-            for (const item of items) {
-                if (item && item.alldebridId && item.filename) {
-                    stmtInsertMovie.run(prop, String(item.alldebridId), item.filename);
+function createMoviesProxy() {
+    return new Proxy({}, {
+        get(target, prop) {
+            if (typeof prop !== "string" || prop === "then") return target[prop];
+            // Si la clé a déjà été initialisée ou chargée en mémoire dans ce cycle (ex: cache.movies[id] = [])
+            if (target[prop] && Array.isArray(target[prop])) {
+                return target[prop];
+            }
+            const rows = stmtGetMovies.all(prop);
+            if (rows && rows.length > 0) {
+                const arr = rows.map(r => ({
+                    alldebridId: r.alldebridId,
+                    link: r.alldebridId,
+                    filename: r.filename
+                }));
+                arr.push = function(...items) {
+                    for (const item of items) {
+                        const idVal = item.alldebridId || item.link;
+                        if (item && idVal && item.filename) {
+                            stmtInsertMovie.run(prop, String(idVal), item.filename);
+                        }
+                    }
+                    return Array.prototype.push.apply(this, items);
+                };
+                target[prop] = arr;
+                return arr;
+            }
+            return target[prop];
+        },
+        set(target, prop, value) {
+            if (typeof prop !== "string") return true;
+            stmtDeleteMovies.run(prop);
+            const arr = Array.isArray(value) ? [...value] : [];
+            arr.push = function(...items) {
+                for (const item of items) {
+                    const idVal = item.alldebridId || item.link;
+                    if (item && idVal && item.filename) {
+                        stmtInsertMovie.run(prop, String(idVal), item.filename);
+                    }
+                }
+                return Array.prototype.push.apply(this, items);
+            };
+            target[prop] = arr;
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    const idVal = item.alldebridId || item.link;
+                    if (item && idVal && item.filename) {
+                        stmtInsertMovie.run(prop, String(idVal), item.filename);
+                    }
                 }
             }
-            return Array.prototype.push.apply(this, items);
-        };
-        return arr;
-    },
-    set(target, prop, value) {
-        if (typeof prop !== "string") return true;
-        stmtDeleteMovies.run(prop);
-        if (Array.isArray(value)) {
-            for (const item of value) {
-                if (item && item.alldebridId && item.filename) {
-                    stmtInsertMovie.run(prop, String(item.alldebridId), item.filename);
-                }
-            }
+            return true;
         }
-        return true;
-    }
-}) : null;
+    });
+}
 
 const sqliteSeriesProxy = useSqlite ? new Proxy({}, {
     get(target, prop) {
@@ -226,7 +256,7 @@ const sqliteClassificationsProxy = useSqlite ? new Proxy({}, {
 
 function loadCache() {
     if (useSqlite) {
-        return { movies: sqliteMoviesProxy, series: sqliteSeriesProxy, classification: sqliteClassificationsProxy };
+        return { movies: createMoviesProxy(), series: sqliteSeriesProxy, classification: sqliteClassificationsProxy };
     }
     // Repli JSON historique si SQLite n'est pas disponible
     try {
@@ -1302,8 +1332,14 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/st
             // (limite de 30 magnets actifs). C'est le fonctionnement standard des addons debrid.
             const torrentioUrl = `https://torrentio.strem.fun/stream/${type}/${id}.json`;
             const [torrentioRes, prowlarrHashes] = await Promise.all([
-                axios.get(torrentioUrl).catch((e) => {
-                    console.error("Erreur Torrentio:", e.message);
+                axios.get(torrentioUrl, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        "Accept": "application/json"
+                    },
+                    timeout: 8000
+                }).catch((e) => {
+                    console.error("Erreur Torrentio:", e.response ? `HTTP ${e.response.status}` : e.message);
                     return null;
                 }),
                 (async () => {
