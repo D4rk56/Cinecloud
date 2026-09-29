@@ -25,7 +25,7 @@ Pour résoudre ce problème de manière transparente :
 
 - **Docker & Docker Compose** (recommandé pour une installation simple et isolée)  
   *OU*
-- **Node.js** (version 20 ou supérieure) et **npm**
+- **Node.js** (version 22 ou supérieure recommandée) et **npm**
 
 ---
 
@@ -123,10 +123,11 @@ nuvio.mondomaine.fr {
 
 ---
 
-## 💾 Persistance des données (Volumes)
+## 💾 Persistance des données (Volumes & Base SQLite)
 
-- `nuvio-data` : Conserve le cache local des correspondances IMDb/TMDB (`/app/data/id-cache.json`) pour éviter de relancer des requêtes d'identification à chaque démarrage.
-- `nuvio-warp` : Conserve l'enregistrement du compte WARP (`/var/lib/cloudflare-warp`) pour ne pas recréer de compte inutilement à chaque redémarrage.
+- **`nuvio-data`** : Conserve la base de données SQLite embarquée (`/app/data/nuvio.db`). Grâce au mode **WAL (Write-Ahead Logging)**, l'accès au cache des correspondances IMDb/TMDB et classifications est instantané (`O(1)`), résistant aux pannes (transactions ACID, aucune corruption de fichier) et sans blocage de l'Event Loop.
+  - *Migration automatique :* Si vous possédiez un ancien fichier `id-cache.json`, celui-ci est automatiquement migré vers SQLite au premier démarrage.
+- **`nuvio-warp`** : Conserve l'enregistrement du compte WARP (`/var/lib/cloudflare-warp`) pour ne pas recréer de compte inutilement à chaque redémarrage.
 
 ---
 
@@ -151,10 +152,11 @@ Si vous préférez exécuter l'application directement avec Node.js :
 
 ---
 
-## 🔒 Bonnes pratiques de sécurité intégrées
+## 🔒 Bonnes pratiques de sécurité & Performance intégrées
 
+- **Base de données SQLite intégrée (`node:sqlite`) :** Finies les écritures synchrones sur fichier JSON risquant de corrompre les données. Requêtes indexées ultra-rapides et transactions ACID.
 - **Utilisateur non-root (`node`) :** Le conteneur s'exécute sous le compte utilisateur restreint `node` (UID 1000) et non en tant que `root`.
-- **Image minimale :** L'image Docker s'appuie sur `node:20-alpine` pour limiter la surface d'attaque et réduire la taille de l'image.
+- **Image minimale & moderne :** L'image Docker s'appuie sur `node:22-alpine` pour limiter la surface d'attaque et intégrer nativement SQLite sans dépendance de compilation C++.
 - **Dépendances de production :** Seules les dépendances nécessaires au fonctionnement en production (`--omit=dev`) sont installées.
 - **Healthcheck intégré :** Contrôle régulier de la santé des conteneurs via requêtes locales.
 - **Isolation réseau :** Exclusion des fichiers sensibles (`.env`, logs) via `.dockerignore`.

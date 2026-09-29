@@ -41,27 +41,174 @@ if (proxyUrl) {
     }
 }
 
-// --- Cache local (fichier JSON sur disque, aucune base de données externe nécessaire) ---
+// --- Cache local persistant (SQLite natif ou repli JSON) ---
 // Mappe les vrais ids IMDb ("tt...") vers le contenu correspondant dans ton compte Alldebrid.
 // Permet une intégration TMDB/Cinemeta/MDBList/autres addons native (posters, notes, casting,
 // ET liens de tous tes autres addons installés) sans relancer une recherche TMDB à chaque clic.
 const CACHE_DIR = path.join(__dirname, "data");
 const CACHE_FILE = path.join(CACHE_DIR, "id-cache.json");
-
-// Incrémenter à chaque fois que la logique de nettoyage de nom ou de classification change,
-// pour forcer une réévaluation propre de tout ce qui a été mis en cache avec l'ancienne logique.
+const SQLITE_FILE = path.join(CACHE_DIR, "nuvio.db");
 const CACHE_VERSION = 5;
 
+let useSqlite = false;
+let db = null;
+let stmtGetMovies = null;
+let stmtInsertMovie = null;
+let stmtDeleteMovies = null;
+let stmtGetSeries = null;
+let stmtInsertSeries = null;
+let stmtGetClassification = null;
+let stmtInsertClassification = null;
+
+try {
+    const { DatabaseSync } = require("node:sqlite");
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    db = new DatabaseSync(SQLITE_FILE);
+    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec("PRAGMA synchronous = NORMAL;");
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS movies (
+            imdb_id TEXT NOT NULL,
+            alldebrid_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            PRIMARY KEY (imdb_id, alldebrid_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_movies_imdb ON movies(imdb_id);
+        CREATE TABLE IF NOT EXISTS series (
+            imdb_id TEXT PRIMARY KEY,
+            group_title TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS classifications (
+            item_id TEXT PRIMARY KEY,
+            content_type TEXT NOT NULL,
+            is_anime INTEGER DEFAULT 0
+        );
+    `);
+
+    stmtGetMovies = db.prepare("SELECT alldebrid_id AS alldebridId, filename FROM movies WHERE imdb_id = ?");
+    stmtInsertMovie = db.prepare("INSERT OR REPLACE INTO movies (imdb_id, alldebrid_id, filename) VALUES (?, ?, ?)");
+    stmtDeleteMovies = db.prepare("DELETE FROM movies WHERE imdb_id = ?");
+    stmtGetSeries = db.prepare("SELECT group_title AS groupTitle FROM series WHERE imdb_id = ?");
+    stmtInsertSeries = db.prepare("INSERT OR REPLACE INTO series (imdb_id, group_title) VALUES (?, ?)");
+    stmtGetClassification = db.prepare("SELECT content_type AS type, is_anime AS isAnime FROM classifications WHERE item_id = ?");
+    stmtInsertClassification = db.prepare("INSERT OR REPLACE INTO classifications (item_id, content_type, is_anime) VALUES (?, ?, ?)");
+
+    useSqlite = true;
+    console.log(`[Cache] Base de données SQLite active (${SQLITE_FILE}) en mode WAL.`);
+
+    // Migration transparente si un ancien fichier id-cache.json est présent
+    if (fs.existsSync(CACHE_FILE)) {
+        try {
+            const raw = fs.readFileSync(CACHE_FILE, "utf8");
+            const oldCache = JSON.parse(raw);
+            const countCheck = db.prepare("SELECT COUNT(*) AS count FROM movies").get();
+            if (countCheck && countCheck.count === 0) {
+                console.log("[Cache] Migration de l'ancien id-cache.json vers SQLite en cours...");
+                db.exec("BEGIN TRANSACTION;");
+                for (const [imdbId, versions] of Object.entries(oldCache.movies || {})) {
+                    const list = Array.isArray(versions) ? versions : [versions];
+                    for (const v of list) {
+                        if (v && v.alldebridId && v.filename) {
+                            stmtInsertMovie.run(imdbId, String(v.alldebridId), v.filename);
+                        }
+                    }
+                }
+                for (const [imdbId, s] of Object.entries(oldCache.series || {})) {
+                    if (s && s.groupTitle) {
+                        stmtInsertSeries.run(imdbId, s.groupTitle);
+                    }
+                }
+                for (const [itemId, c] of Object.entries(oldCache.classification || {})) {
+                    if (c && c.type) {
+                        stmtInsertClassification.run(itemId, c.type, c.isAnime ? 1 : 0);
+                    }
+                }
+                db.exec("COMMIT;");
+                console.log("[Cache] Migration vers SQLite terminée avec succès !");
+            }
+            fs.renameSync(CACHE_FILE, CACHE_FILE + ".migrated");
+        } catch (migErr) {
+            console.error("[Cache] Erreur lors de la migration du cache JSON vers SQLite:", migErr.message);
+        }
+    }
+} catch (e) {
+    console.warn("[Cache] node:sqlite indisponible, bascule sur le cache JSON historique:", e.message);
+    useSqlite = false;
+}
+
+// Proxies SQLite transparents pour conserver 100% de compatibilité avec le code existant
+const sqliteMoviesProxy = useSqlite ? new Proxy({}, {
+    get(target, prop) {
+        if (typeof prop !== "string" || prop === "then") return target[prop];
+        const rows = stmtGetMovies.all(prop);
+        if (!rows || rows.length === 0) return undefined;
+        const arr = rows.map(r => ({ alldebridId: r.alldebridId, filename: r.filename }));
+        arr.push = function(...items) {
+            for (const item of items) {
+                if (item && item.alldebridId && item.filename) {
+                    stmtInsertMovie.run(prop, String(item.alldebridId), item.filename);
+                }
+            }
+            return Array.prototype.push.apply(this, items);
+        };
+        return arr;
+    },
+    set(target, prop, value) {
+        if (typeof prop !== "string") return true;
+        stmtDeleteMovies.run(prop);
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                if (item && item.alldebridId && item.filename) {
+                    stmtInsertMovie.run(prop, String(item.alldebridId), item.filename);
+                }
+            }
+        }
+        return true;
+    }
+}) : null;
+
+const sqliteSeriesProxy = useSqlite ? new Proxy({}, {
+    get(target, prop) {
+        if (typeof prop !== "string" || prop === "then") return target[prop];
+        const row = stmtGetSeries.get(prop);
+        if (!row) return undefined;
+        return { groupTitle: row.groupTitle };
+    },
+    set(target, prop, value) {
+        if (typeof prop !== "string") return true;
+        if (value && value.groupTitle) {
+            stmtInsertSeries.run(prop, value.groupTitle);
+        }
+        return true;
+    }
+}) : null;
+
+const sqliteClassificationsProxy = useSqlite ? new Proxy({}, {
+    get(target, prop) {
+        if (typeof prop !== "string" || prop === "then") return target[prop];
+        const row = stmtGetClassification.get(prop);
+        if (!row) return undefined;
+        return { type: row.type, isAnime: Boolean(row.isAnime) };
+    },
+    set(target, prop, value) {
+        if (typeof prop !== "string") return true;
+        if (value && value.type) {
+            stmtInsertClassification.run(prop, value.type, value.isAnime ? 1 : 0);
+        }
+        return true;
+    }
+}) : null;
+
 function loadCache() {
+    if (useSqlite) {
+        return { movies: sqliteMoviesProxy, series: sqliteSeriesProxy, classification: sqliteClassificationsProxy };
+    }
+    // Repli JSON historique si SQLite n'est pas disponible
     try {
         const cache = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8"));
         if (cache.version !== CACHE_VERSION) {
-            // Logique changée depuis : on repart d'un cache propre pour ce qui dépend du nettoyage
-            // de nom / classification (sinon les anciennes erreurs restent figées indéfiniment).
             return { version: CACHE_VERSION, movies: {}, series: {}, classification: {} };
         }
-        // Rétrocompatibilité : l'ancien format stockait un seul objet par film, on passe à un tableau
-        // pour supporter plusieurs versions (langues) d'un même film.
         for (const key in cache.movies || {}) {
             if (!Array.isArray(cache.movies[key])) cache.movies[key] = [cache.movies[key]];
         }
@@ -75,6 +222,10 @@ function loadCache() {
 }
 
 function saveCache(cache) {
+    if (useSqlite) {
+        // En mode SQLite, chaque modification est déjà immédiatement et atomiquement enregistrée en base
+        return;
+    }
     try {
         cache.version = CACHE_VERSION;
         if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -83,7 +234,7 @@ function saveCache(cache) {
         console.error("Erreur sauvegarde cache:", e.message);
     }
 }
-// --- Fin cache local ---
+// --- Fin cache local persistant ---
 
 // Configuration des CORS obligatoires pour Nuvio
 app.use((req, res, next) => {

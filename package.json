@@ -4,7 +4,7 @@
   "description": "Addon Alldebrid pour Nuvio - auto-hébergé",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node --experimental-sqlite index.js"
   },
   "dependencies": {
     "axios": "^1.7.2",
@@ -12,6 +12,6 @@
     "proxy-agent": "^8.0.2"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }

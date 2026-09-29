@@ -1,13 +1,14 @@
 # ==============================================================================
 # Dockerfile pour Nuvio-Alldebrid Addon
-# Image de base légère et sécurisée basée sur Alpine Linux
+# Image de base légère et sécurisée basée sur Node.js 22 Alpine Linux
 # ==============================================================================
 
-FROM node:20-alpine
+FROM node:22-alpine
 
 # Définition des variables d'environnement de production
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    NODE_OPTIONS="--experimental-sqlite"
 
 # Répertoire de travail de l'application
 WORKDIR /app
