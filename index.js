@@ -18,6 +18,29 @@ app.set("etag", false); // Désactive la génération d'ETag par Express (source
     });
 })();
 
+// --- Support Proxy / Cloudflare WARP pour contourner les restrictions IP Datacenter (Alldebrid) ---
+const proxyUrl = process.env.WARP_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY;
+if (proxyUrl) {
+    try {
+        const { ProxyAgent } = require("proxy-agent");
+        const agent = new ProxyAgent({
+            getProxyForUrl: (url) => {
+                const parsed = new URL(url);
+                // Ne pas relayer localhost / loopback à travers le proxy externe
+                if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1") {
+                    return undefined;
+                }
+                return proxyUrl;
+            }
+        });
+        axios.defaults.httpsAgent = agent;
+        axios.defaults.httpAgent = agent;
+        console.log(`[Proxy] Requêtes sortantes routées via : ${proxyUrl.replace(/:\/\/.*@/, "://***@")}`);
+    } catch (e) {
+        console.error("[Proxy] Erreur lors de l'initialisation du proxy:", e.message);
+    }
+}
+
 // --- Cache local (fichier JSON sur disque, aucune base de données externe nécessaire) ---
 // Mappe les vrais ids IMDb ("tt...") vers le contenu correspondant dans ton compte Alldebrid.
 // Permet une intégration TMDB/Cinemeta/MDBList/autres addons native (posters, notes, casting,

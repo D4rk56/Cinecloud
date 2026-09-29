@@ -1,20 +1,43 @@
 services:
+  # Service Cloudflare WARP : contourne les blocages d'IP Datacenter sur VPS
+  warp:
+    image: caomingjun/warp:latest
+    container_name: nuvio-warp
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.conf.all.src_valid_mark=1
+    volumes:
+      - nuvio-warp:/var/lib/cloudflare-warp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   nuvio:
     build: .
     container_name: nuvio-alldebrid
     restart: unless-stopped
     init: true
     ports:
-      # Liaison sur localhost uniquement : le reverse proxy (Nginx, Caddy, SWAG, etc.)
+      # Liaison sur localhost uniquement : le reverse proxy (Nginx, Caddy, etc.)
       # redirige les requêtes publiques vers ce port local sécurisé.
       - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - WARP_PROXY=http://warp:1080
+    depends_on:
+      warp:
+        condition: service_healthy
     volumes:
       - nuvio-data:/app/data
 
-    # Exemple pour les utilisateurs de Traefik ou Nginx Proxy Manager avec réseau partagé :
+    # Exemple pour intégration à un réseau partagé (Traefik, NPM, etc.) :
     # networks:
     #   - proxy_network
     # labels:
@@ -27,6 +50,8 @@ services:
 volumes:
   nuvio-data:
     name: nuvio-alldebrid-data
+  nuvio-warp:
+    name: nuvio-alldebrid-warp
 
 # networks:
 #   proxy_network:

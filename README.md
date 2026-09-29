@@ -6,6 +6,21 @@ L'application agit en tant que serveur relais local pour débrider les liens via
 
 ---
 
+## 🛡️ Contournement des blocages IP Alldebrid (Cloudflare WARP)
+
+Lorsque vous hébergez cet addon sur un **VPS ou serveur Cloud** (OVH, Hetzner, Scaleway, Oracle, AWS, etc.), **Alldebrid bloque ou restreint fréquemment les requêtes de débridage (`/link/unlock`)** car l'adresse IP provient d'un datacenter.
+
+Pour résoudre ce problème de manière transparente :
+- Un conteneur sidecar **Cloudflare WARP** (`caomingjun/warp`) est intégré dans nos fichiers Docker Compose.
+- Il génère automatiquement un compte WARP gratuit au démarrage et achemine le trafic sortant de Nuvio via le réseau Cloudflare Edge avec une **adresse IP résidentielle/clean**, acceptée sans restriction par Alldebrid.
+- **Zéro configuration manuelle requise.**
+
+> [!TIP]
+> **Vous hébergez sur votre machine personnelle / Box Internet (IP résidentielle) ?**  
+> Vous n'avez pas besoin de WARP. Vous pouvez simplement commenter le service `warp` ainsi que la ligne `WARP_PROXY=http://warp:1080` dans votre fichier `docker-compose.yml` : l'application effectuera alors ses requêtes directement sans proxy.
+
+---
+
 ## 📋 Prérequis
 
 - **Docker & Docker Compose** (recommandé pour une installation simple et isolée)  
@@ -18,9 +33,12 @@ L'application agit en tant que serveur relais local pour débrider les liens via
 
 Deux modes de déploiement Docker Compose sont disponibles selon votre infrastructure réseau.
 
-### Option 1 : Déploiement avec Cloudflare Tunnel (Accès distant sans ouvrir de port)
+### Option 1 : Déploiement avec Cloudflare Tunnel & WARP (Accès distant sans ouvrir de port)
 
-Ce mode lance à la fois l'addon Nuvio et un conteneur Cloudflare Tunnel éphémère (`trycloudflare.com`). Cela vous permet d'accéder à votre addon depuis vos appareils mobiles ou TV à l'extérieur de chez vous, **sans avoir à ouvrir de port sur votre box Internet**.
+Ce mode lance :
+1. **`warp`** : Le proxy Cloudflare WARP pour contourner les blocages Alldebrid.
+2. **`nuvio`** : L'addon Nuvio Alldebrid.
+3. **`tunnel`** : Un conteneur Cloudflare Tunnel éphémère (`trycloudflare.com`) pour accéder à l'addon depuis n'importe où (TV, smartphone) **sans ouvrir de port sur votre box / pare-feu**.
 
 #### 1. Démarrer les services
 ```bash
@@ -39,17 +57,23 @@ Une fois les conteneurs démarrés, affichez les logs du tunnel pour récupérer
   docker logs nuvio-tunnel 2>&1 | Select-String trycloudflare
   ```
 
-#### 3. Configurer l'addon
+#### 3. Vérifier le bon fonctionnement de Cloudflare WARP
+```bash
+docker logs nuvio-warp
+```
+Vous devriez voir `Status: Connected` et l'adresse de proxy prête sur le port 1080.
+
+#### 4. Configurer l'addon
 Ouvrez l'URL obtenue dans votre navigateur web pour accéder à l'interface de configuration, saisir votre clé API Alldebrid et installer le lien dans Nuvio.
 
-#### 4. Arrêter les services
+#### 5. Arrêter les services
 ```bash
 docker compose down
 ```
 
 ---
 
-### Option 2 : Déploiement derrière un Reverse Proxy (sans Cloudflare Tunnel)
+### Option 2 : Déploiement derrière un Reverse Proxy (avec WARP)
 
 Si vous disposez déjà de votre propre nom de domaine et d'un Reverse Proxy (Nginx, Caddy, Traefik, Nginx Proxy Manager, SWAG, etc.), utilisez le fichier Compose dédié :
 
@@ -58,6 +82,7 @@ docker compose -f docker-compose.reverse-proxy.yml up -d --build
 ```
 
 - **Sécurité :** Ce mode lie le port de l'addon exclusivement sur `127.0.0.1:3000` (localhost), empêchant toute exposition directe non filtrée sur Internet.
+- **WARP inclus :** Vos requêtes vers Alldebrid continuent de bénéficier du bypass WARP.
 - **Arrêt :**
   ```bash
   docker compose -f docker-compose.reverse-proxy.yml down
@@ -98,10 +123,10 @@ nuvio.mondomaine.fr {
 
 ---
 
-## 💾 Persistance des données (Cache)
+## 💾 Persistance des données (Volumes)
 
-L'application met en cache les correspondances IMDb/TMDB dans le dossier `/app/data/id-cache.json`.  
-Les fichiers `docker-compose*.yml` définissent automatiquement un volume persistant nommé `nuvio-data` pour conserver ce cache entre les redémarrages et les mises à jour des conteneurs.
+- `nuvio-data` : Conserve le cache local des correspondances IMDb/TMDB (`/app/data/id-cache.json`) pour éviter de relancer des requêtes d'identification à chaque démarrage.
+- `nuvio-warp` : Conserve l'enregistrement du compte WARP (`/var/lib/cloudflare-warp`) pour ne pas recréer de compte inutilement à chaque redémarrage.
 
 ---
 
@@ -122,6 +147,8 @@ Si vous préférez exécuter l'application directement avec Node.js :
 3. **Accéder à l'addon :**
    Ouvrez [http://localhost:3000](http://localhost:3000) dans votre navigateur.
 
+*(Optionnel) Si vous souhaitez utiliser un proxy avec le mode classique : définissez la variable d'environnement `WARP_PROXY` ou `HTTP_PROXY` (ex: `export WARP_PROXY=http://127.0.0.1:1080`) avant de lancer `npm start`.*
+
 ---
 
 ## 🔒 Bonnes pratiques de sécurité intégrées
@@ -129,5 +156,5 @@ Si vous préférez exécuter l'application directement avec Node.js :
 - **Utilisateur non-root (`node`) :** Le conteneur s'exécute sous le compte utilisateur restreint `node` (UID 1000) et non en tant que `root`.
 - **Image minimale :** L'image Docker s'appuie sur `node:20-alpine` pour limiter la surface d'attaque et réduire la taille de l'image.
 - **Dépendances de production :** Seules les dépendances nécessaires au fonctionnement en production (`--omit=dev`) sont installées.
-- **Healthcheck intégré :** Contrôle régulier de la santé du conteneur via requêtes HTTP locales.
+- **Healthcheck intégré :** Contrôle régulier de la santé des conteneurs via requêtes locales.
 - **Isolation réseau :** Exclusion des fichiers sensibles (`.env`, logs) via `.dockerignore`.
