@@ -1,0 +1,32 @@
+# Dépendances Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Git
+.git/
+.gitignore
+
+# Environnement et secrets
+.env
+.env.*
+!.env.example
+
+# Cache local applicatif (monté via volume Docker)
+data/
+
+# Fichiers Docker et documentation
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+README.md
+
+# Fichiers système et éditeurs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo

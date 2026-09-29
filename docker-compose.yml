@@ -1,0 +1,26 @@
+services:
+  nuvio:
+    build: .
+    container_name: nuvio-alldebrid
+    restart: unless-stopped
+    init: true
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    volumes:
+      - nuvio-data:/app/data
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: nuvio-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://nuvio:3000
+    depends_on:
+      nuvio:
+        condition: service_healthy
+
+volumes:
+  nuvio-data:
+    name: nuvio-alldebrid-data

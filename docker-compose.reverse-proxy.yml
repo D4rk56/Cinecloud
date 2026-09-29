@@ -1,0 +1,33 @@
+services:
+  nuvio:
+    build: .
+    container_name: nuvio-alldebrid
+    restart: unless-stopped
+    init: true
+    ports:
+      # Liaison sur localhost uniquement : le reverse proxy (Nginx, Caddy, SWAG, etc.)
+      # redirige les requêtes publiques vers ce port local sécurisé.
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    volumes:
+      - nuvio-data:/app/data
+
+    # Exemple pour les utilisateurs de Traefik ou Nginx Proxy Manager avec réseau partagé :
+    # networks:
+    #   - proxy_network
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.nuvio.rule=Host(`nuvio.mondomaine.fr`)"
+    #   - "traefik.http.routers.nuvio.entrypoints=websecure"
+    #   - "traefik.http.routers.nuvio.tls.certresolver=letsencrypt"
+    #   - "traefik.http.services.nuvio.loadbalancer.server.port=3000"
+
+volumes:
+  nuvio-data:
+    name: nuvio-alldebrid-data
+
+# networks:
+#   proxy_network:
+#     external: true
