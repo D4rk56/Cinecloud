@@ -33,17 +33,25 @@ Pour résoudre ce problème de manière transparente :
 
 Deux modes de déploiement Docker Compose sont disponibles selon votre infrastructure réseau.
 
+L'image est automatiquement compilée et publiée sur **GitHub Container Registry (GHCR)** :
+`ghcr.io/d4rk56/nuvio-alldebrid:latest` *(compatible multi-architecture `linux/amd64` et `linux/arm64` pour Raspberry Pi / VPS ARM / Apple Silicon)*.
+
+Vous pouvez au choix :
+- **Utiliser l'image pré-compilée :** `docker compose pull nuvio && docker compose up -d`
+- **Compiler localement les sources :** `docker compose up -d --build`
+
 ### Option 1 : Déploiement avec Cloudflare Tunnel & WARP (Accès distant sans ouvrir de port)
 
 Ce mode lance :
 1. **`warp`** : Le proxy Cloudflare WARP pour contourner les blocages Alldebrid.
-2. **`nuvio`** : L'addon Nuvio Alldebrid.
+2. **`nuvio`** : L'addon Nuvio Alldebrid (image GHCR ou build local).
 3. **`tunnel`** : Un conteneur Cloudflare Tunnel éphémère (`trycloudflare.com`) pour accéder à l'addon depuis n'importe où (TV, smartphone) **sans ouvrir de port sur votre box / pare-feu**.
 
 #### 1. Démarrer les services
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
+*(ou `docker compose up -d --build` pour forcer la compilation locale)*
 
 #### 2. Récupérer l'URL publique Cloudflare
 Une fois les conteneurs démarrés, affichez les logs du tunnel pour récupérer votre URL sécurisée `https://xxxx.trycloudflare.com` :

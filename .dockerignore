@@ -5,9 +5,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Git
+# Git & CI
 .git/
 .gitignore
+.github/
 
 # Environnement et secrets
 .env

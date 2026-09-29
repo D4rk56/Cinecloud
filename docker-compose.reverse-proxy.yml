@@ -19,6 +19,7 @@ services:
       start_period: 10s
 
   nuvio:
+    image: ghcr.io/d4rk56/nuvio-alldebrid:latest
     build: .
     container_name: nuvio-alldebrid
     restart: unless-stopped
