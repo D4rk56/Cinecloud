@@ -198,23 +198,31 @@ function createMoviesProxy() {
         set(target, prop, value) {
             if (typeof prop !== "string") return true;
             stmtDeleteMovies.run(prop);
-            const arr = Array.isArray(value) ? [...value] : [];
+            const rawList = Array.isArray(value) ? value : [];
+            const arr = rawList.map(item => {
+                const idVal = item ? (item.alldebridId || item.link) : null;
+                return {
+                    alldebridId: (item && item.alldebridId) || idVal,
+                    link: (item && item.link) || idVal,
+                    filename: item ? item.filename : ""
+                };
+            });
             arr.push = function(...items) {
                 for (const item of items) {
-                    const idVal = item.alldebridId || item.link;
+                    const idVal = item ? (item.alldebridId || item.link) : null;
                     if (item && idVal && item.filename) {
                         stmtInsertMovie.run(prop, String(idVal), item.filename);
+                        if (!item.alldebridId) item.alldebridId = idVal;
+                        if (!item.link) item.link = idVal;
                     }
                 }
                 return Array.prototype.push.apply(this, items);
             };
             target[prop] = arr;
-            if (Array.isArray(value)) {
-                for (const item of value) {
-                    const idVal = item.alldebridId || item.link;
-                    if (item && idVal && item.filename) {
-                        stmtInsertMovie.run(prop, String(idVal), item.filename);
-                    }
+            for (const item of rawList) {
+                const idVal = item ? (item.alldebridId || item.link) : null;
+                if (item && idVal && item.filename) {
+                    stmtInsertMovie.run(prop, String(idVal), item.filename);
                 }
             }
             return true;
