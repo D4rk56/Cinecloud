@@ -169,3 +169,71 @@ test("Prowlarr Worker - resolveReleaseImdbId prioritizes series for TV releases"
     assert.equal(imdbSeries, "tt0903747", "Doit associer la série Breaking Bad tt0903747 et non le film El Camino tt9243946");
 });
 
+test("Helpers - isConfidentTitleMatch rejects error strings and unrelated titles", () => {
+    const { isConfidentTitleMatch } = require("../lib/helpers");
+
+    // Faux positifs critiques identifiés chez l'utilisateur
+    assert.equal(isConfidentTitleMatch("not allowed", "Men Not Allowed"), false, "Doit rejeter 'not allowed' mappé vers Men Not Allowed");
+    assert.equal(isConfidentTitleMatch("method not allowed", "Men Not Allowed"), false);
+    assert.equal(isConfidentTitleMatch("404", "404 Not Found"), false);
+    assert.equal(isConfidentTitleMatch("archive", "Rare Exports"), false);
+
+    // Titres légitimes avec ponctuation ou variantes
+    assert.equal(isConfidentTitleMatch("Avengers Endgame", "Avengers: Endgame"), true);
+    assert.equal(isConfidentTitleMatch("The Amateur", "The Amateur"), true);
+    assert.equal(isConfidentTitleMatch("Inception", "Inception", "2010", "2010"), true);
+
+    // Rejet en cas d'écart d'année excessif
+    assert.equal(isConfidentTitleMatch("Gladiator II", "Gladiator", "2024", "2000"), false);
+});
+
+test("Catalogs - Recommendations catalogs are present in ALL_CATALOGS and manifest", () => {
+    const { ALL_CATALOGS } = require("../lib/helpers");
+    const recoIds = ["my_ad_reco_movies", "my_ad_reco_series", "my_ad_reco_animes", "my_ad_reco_animes_movies"];
+    for (const rid of recoIds) {
+        assert.ok(ALL_CATALOGS.some(c => c.id === rid), `Catalogue ${rid} doit être défini dans ALL_CATALOGS`);
+    }
+
+    const manifestAll = handleManifest({ enabledCatalogs: "all" });
+    for (const rid of recoIds) {
+        assert.ok(manifestAll.catalogs.some(c => c.id === rid), `Catalogue ${rid} doit être actif dans le manifeste`);
+    }
+});
+
+test("Database - getCachedTorrentsByImdb includes torrents with seeders even if not pre-cached", () => {
+    const testHash = "9876543210abcdef9876543210abcdef98765432";
+    const imdbId = "tt0111161"; // Shawshank Redemption
+
+    upsertCachedTorrent({
+        infoHash: testHash,
+        imdbId: imdbId,
+        title: "Shawshank Redemption French 1080p",
+        filename: "Shawshank.Redemption.mkv",
+        size: 5000000000,
+        indexer: "Prowlarr",
+        seeders: 42,
+        isInstant: 0 // Non instantané au moment du scan RSS
+    });
+
+    const results = getCachedTorrentsByImdb(imdbId);
+    assert.ok(results.length > 0, "Doit renvoyer les torrents actifs avec seeders");
+    const found = results.find(t => t.infoHash === testHash.toLowerCase());
+    assert.ok(found, "Le torrent avec seeders doit être sélectionné par la requête");
+    assert.equal(found.seeders, 42);
+
+    deleteCachedTorrent(testHash);
+});
+
+test("Catalogs - handleCatalog generates recommendations with valid metadata", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const { TMDB_KEY_DEFAULT } = require("../lib/helpers");
+
+    const res = await handleCatalog({ apiKey: "test_key", tmdbKey: TMDB_KEY_DEFAULT }, "movie", "my_ad_reco_movies", {});
+    assert.ok(res && Array.isArray(res.metas), "Doit retourner une liste de métas");
+    assert.ok(res.metas.length > 0, "Doit contenir des recommandations même sans historique");
+    assert.ok(res.metas[0].id.startsWith("tt"), "Chaque recommandation doit avoir un identifiant IMDb valide");
+    assert.ok(res.metas[0].name, "Chaque recommandation doit avoir un titre");
+});
+
+
+
