@@ -216,7 +216,7 @@ app.post("/api/user/delete", authLimiter, (req, res) => {
 // =============================================================================
 // 2. ENDPOINT DE RÉSOLUTION LAZY (VALIDATION & FAILOVER INSTANTANÉ)
 // =============================================================================
-app.get("/resolve/:userRef/:imdbId/:fileRef", handleResolve);
+app.get("/resolve/:userRef/:imdbId/:fileRef(*)", handleResolve);
 
 // =============================================================================
 // 3. ROUTES STREMIO SÉCURISÉES (FORMAT MODERNE /:uuid/*)
@@ -244,7 +244,7 @@ app.get("/:uuid/catalog/:type/:id/:extra.json", async (req, res) => {
     const config = getUserConfig(req.params.uuid);
     if (!config) return res.status(404).json({ error: "Addon introuvable." });
     try {
-        const result = await handleCatalog(config, req.params.type, req.params.id, cache);
+        const result = await handleCatalog(config, req.params.type, req.params.id, cache, req.params.extra);
         res.json(result);
     } catch (err) {
         res.json({ metas: [] });
@@ -312,7 +312,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/ca
 app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id/:extra.json", async (req, res) => {
     const config = parseLegacyConfig(req.params);
     try {
-        const result = await handleCatalog(config, req.params.type, req.params.id, cache);
+        const result = await handleCatalog(config, req.params.type, req.params.id, cache, req.params.extra);
         res.json(result);
     } catch (err) {
         res.json({ metas: [] });

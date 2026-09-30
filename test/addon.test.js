@@ -177,6 +177,9 @@ test("Helpers - isConfidentTitleMatch rejects error strings and unrelated titles
     assert.equal(isConfidentTitleMatch("method not allowed", "Men Not Allowed"), false);
     assert.equal(isConfidentTitleMatch("404", "404 Not Found"), false);
     assert.equal(isConfidentTitleMatch("archive", "Rare Exports"), false);
+    assert.equal(isConfidentTitleMatch("ipnotallowed", "Ip Not Allowed"), false, "Doit rejeter 'ipnotallowed'");
+    assert.equal(isConfidentTitleMatch("ip not allowed", "Ip Not Allowed"), false, "Doit rejeter 'ip not allowed'");
+    assert.equal(isConfidentTitleMatch("generic_ip_not_allowed", "Some Title"), false, "Doit rejeter 'generic_ip_not_allowed'");
 
     // Titres légitimes avec ponctuation ou variantes
     assert.equal(isConfidentTitleMatch("Avengers Endgame", "Avengers: Endgame"), true);
@@ -234,6 +237,211 @@ test("Catalogs - handleCatalog generates recommendations with valid metadata", a
     assert.ok(res.metas[0].id.startsWith("tt"), "Chaque recommandation doit avoir un identifiant IMDb valide");
     assert.ok(res.metas[0].name, "Chaque recommandation doit avoir un titre");
 });
+
+test("Catalogs - Anime recommendations return animation titles from Cinemeta fallback", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const resAnime = await handleCatalog({ apiKey: "test_key" }, "series", "my_ad_reco_animes", {});
+    assert.ok(resAnime && Array.isArray(resAnime.metas), "Doit retourner une liste de métas");
+    assert.ok(resAnime.metas.length > 0, "Doit retourner des animes");
+    assert.ok(resAnime.metas[0].id.startsWith("tt"), "Doit avoir un identifiant IMDb valide");
+});
+
+test("Resolver - handleResolve redirects 302 directly to downloadUrl without dropping valid links", async () => {
+    const { handleResolve } = require("../lib/resolver");
+    const { createUser, deleteUser } = require("../lib/db");
+    const { hashPassword, encryptConfig } = require("../lib/crypto");
+
+    const testUuid = "11111111-2222-3333-4444-555555555555";
+    const testApiKey = "dummy_api_key_for_test";
+    const passwordHash = hashPassword("secret123");
+    const configEncrypted = encryptConfig({ apiKey: testApiKey });
+    createUser(testUuid, passwordHash, configEncrypted);
+
+    // Mock Express req & res
+    let redirectCode = null;
+    let redirectUrl = null;
+    let statusCode = null;
+
+    const req = {
+        params: {
+            userRef: testUuid,
+            imdbId: "tt1234567",
+            fileRef: encodeURIComponent("https://mock.debrid.it/dl/testfile.mkv")
+        }
+    };
+
+    // Override alldebridApi.post temporarily for this test
+    const alldebrid = require("../lib/alldebrid");
+    const originalPost = alldebrid.alldebridApi.post;
+    alldebrid.alldebridApi.post = async () => ({
+        data: {
+            status: "success",
+            data: {
+                link: "https://mock.debrid.it/dl/testfile.mkv",
+                filename: "testfile.mkv",
+                filesize: 1000000000
+            }
+        }
+    });
+
+    const res = {
+        redirect: (code, url) => {
+            redirectCode = code;
+            redirectUrl = url;
+        },
+        status: (code) => {
+            statusCode = code;
+            return {
+                json: () => {},
+                send: () => {}
+            };
+        }
+    };
+
+    try {
+        await handleResolve(req, res);
+        assert.equal(redirectCode, 302, "Doit faire une redirection 302 vers le CDN");
+        assert.equal(redirectUrl, "https://mock.debrid.it/dl/testfile.mkv", "Doit rediriger vers l'URL de téléchargement");
+    } finally {
+        alldebrid.alldebridApi.post = originalPost;
+        deleteUser(testUuid);
+    }
+});
+
+test("Prowlarr On-Demand - searchProwlarrOnDemand handles queries and returns formatted results", async () => {
+    const { searchProwlarrOnDemand } = require("../lib/prowlarr-worker");
+    const axios = require("axios");
+    const originalGet = axios.get;
+
+    axios.get = async (url) => {
+        if (url.includes("api/v1/search")) {
+            return {
+                data: [
+                    {
+                        title: "Dune.Part.Two.2024.FRENCH.1080p.WEB.H264",
+                        fileName: "Dune.Part.Two.2024.FRENCH.1080p.WEB.H264.mkv",
+                        infoHash: "1234567890abcdef1234567890abcdef12345678",
+                        size: 4500000000,
+                        indexer: "Sharewood",
+                        seeders: 50
+                    }
+                ]
+            };
+        }
+        return originalGet(url);
+    };
+
+    try {
+        const results = await searchProwlarrOnDemand({
+            id: "tt15239678",
+            type: "movie",
+            cleanTitle: "Dune Part Two",
+            prowlarrUrl: "http://mock-prowlarr:9696",
+            prowlarrKey: "mock_key",
+            apiKey: null
+        });
+
+        assert.equal(results.length, 1);
+        assert.equal(results[0].indexer, "Sharewood");
+        assert.equal(results[0].seeders, 50);
+        assert.equal(results[0].infoHash, "1234567890abcdef1234567890abcdef12345678");
+
+        deleteCachedTorrent("1234567890abcdef1234567890abcdef12345678");
+    } finally {
+        axios.get = originalGet;
+    }
+});
+
+test("AllDebrid - Proxy configuration routes through ProxyAgent getProxyForUrl", async () => {
+    const { ProxyAgent } = require("proxy-agent");
+    const testProxy = "http://127.0.0.1:1080";
+    const agent = new ProxyAgent({ getProxyForUrl: () => testProxy });
+    const targetUrl = "https://api.alldebrid.com/v4/user";
+    const resolvedProxy = await agent.getProxyForUrl(targetUrl);
+    assert.equal(resolvedProxy, testProxy, "ProxyAgent doit résoudre l'URL du proxy WARP");
+});
+
+test("Meta - handleMeta directly retrieves Cinemeta metadata for IMDb tt IDs when TMDB key is default", async () => {
+    const { handleMeta } = require("../lib/stremio");
+    const metaRes = await handleMeta({ apiKey: "dummy_key", tmdbKey: "default" }, "movie", "tt1375666", {});
+    assert.ok(metaRes && metaRes.meta, "Doit renvoyer un objet meta");
+    assert.match(metaRes.meta.name, /Inception/i, "Le titre doit être Inception");
+    assert.ok(metaRes.meta.poster, "Doit avoir un poster valide");
+    assert.ok(metaRes.meta.description, "Doit avoir une description");
+});
+
+test("Catalogs - handleCatalog correctly applies skip pagination on recommendation catalogs", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const fullRes = await handleCatalog({ apiKey: "test_key" }, "movie", "my_ad_reco_movies", {}, null);
+    assert.ok(fullRes && Array.isArray(fullRes.metas), "Doit retourner une liste de métas");
+
+    const paginatedRes = await handleCatalog({ apiKey: "test_key" }, "movie", "my_ad_reco_movies", {}, "skip=5");
+    assert.ok(paginatedRes && Array.isArray(paginatedRes.metas), "Doit retourner une liste paginée");
+    assert.equal(paginatedRes.metas.length, Math.max(0, fullRes.metas.length - 5));
+    if (fullRes.metas.length > 5) {
+        assert.equal(paginatedRes.metas[0].id, fullRes.metas[5].id, "Le premier élément après skip=5 doit correspondre au 6ème élément global");
+    }
+});
+
+test("Prowlarr On-Demand - query sanitization cleans punctuation like colons and apostrophes", async () => {
+    const { searchProwlarrOnDemand } = require("../lib/prowlarr-worker");
+    const axios = require("axios");
+    const originalGet = axios.get;
+
+    let interceptedUrl = null;
+    let interceptedHeaders = null;
+    axios.get = async (url, config) => {
+        if (url.includes("api/v1/search")) {
+            interceptedUrl = url;
+            interceptedHeaders = config?.headers;
+            return {
+                data: [
+                    {
+                        title: "Attack.on.Titan.S01E01.FRENCH.1080p",
+                        fileName: "Attack.on.Titan.S01E01.FRENCH.1080p.mkv",
+                        infoHash: "aabbccddeeff00112233445566778899aabbccdd",
+                        size: 1500000000,
+                        indexer: "Ygg",
+                        seeders: 15
+                    }
+                ]
+            };
+        }
+        return originalGet(url, config);
+    };
+
+    try {
+        const results = await searchProwlarrOnDemand({
+            id: "tt2560140:1:1",
+            type: "series",
+            cleanTitle: "L'Attaque des Titans: Le Début",
+            season: 1,
+            episode: 1,
+            prowlarrUrl: "http://prowlarr:9696",
+            prowlarrKey: "mock_prowlarr_key",
+            apiKey: null
+        });
+
+        assert.ok(interceptedUrl, "L'URL Prowlarr doit avoir été appelée");
+        assert.ok(!interceptedUrl.includes("%3A") && !interceptedUrl.includes("%27"), "La recherche ne doit pas contenir de deux-points ou d'apostrophes encodés");
+        assert.ok(interceptedHeaders && interceptedHeaders["X-Api-Key"] === "mock_prowlarr_key", "Doit inclure l'en-tête X-Api-Key");
+        assert.equal(results.length, 1);
+        assert.equal(results[0].indexer, "Ygg");
+
+        deleteCachedTorrent("aabbccddeeff00112233445566778899aabbccdd");
+    } finally {
+        axios.get = originalGet;
+    }
+});
+
+test("Resolver - unlockFileTarget accepts direct CDN links without erroring on unlockLink failure", async () => {
+    const { unlockFileTarget } = require("../lib/resolver");
+    const directCdnUrl = "https://mock.debrid.it/dl/myvideo.mkv?token=123";
+    const res = await unlockFileTarget("dummy_api_key", directCdnUrl, "tt1234567");
+    assert.equal(res, directCdnUrl, "Doit renvoyer directement le lien CDN si c'est un flux direct valide");
+});
+
+
 
 
 
