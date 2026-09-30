@@ -113,7 +113,7 @@ test("Stremio - handleManifest returns valid manifest with CinéCloud FR brandin
     const manifest = handleManifest({ enabledCatalogs: "my_ad_magnets,my_ad_links" }, "https://cinecloud.fr", "test-uuid");
     assert.equal(manifest.name, "CinéCloud FR");
     assert.equal(manifest.id, "org.nuvio.alldebrid");
-    assert.equal(manifest.version, "2.2.0");
+    assert.equal(manifest.version, "2.3.0");
     assert.equal(manifest.logo, "https://cinecloud.fr/logo.png");
     assert.equal(manifest.background, "https://cinecloud.fr/background.png");
     assert.deepEqual(manifest.behaviorHints, { configurable: true, configurationRequired: false });
@@ -559,4 +559,223 @@ test("AllDebrid - SOCKS and network handshake failures activate direct failover"
     disableWarpWithFallback("SOCKS5 socket closed unexpectedly");
     assert.equal(isWarpActive(), false, "Warp doit être désactivé en cas de défaillance SOCKS");
 });
+
+test("Helpers - hasCjkCharacters detects Japanese and Chinese characters", () => {
+    const { hasCjkCharacters } = require("../lib/helpers");
+    assert.equal(hasCjkCharacters("すずめの戸締まり"), true, "Kanji/Kana japonais doit être détecté");
+    assert.equal(hasCjkCharacters("鬼滅の刃"), true, "Kanji doit être détecté");
+    assert.equal(hasCjkCharacters("Suzume"), false, "Titre romanisé ne doit pas être CJK");
+    assert.equal(hasCjkCharacters("Dune: Deuxième Partie (2024)"), false, "Titre français standard");
+});
+
+test("Helpers - formatAioStream removes FR SUB badge and displays filename in right column", () => {
+    const { formatAioStream } = require("../lib/helpers");
+    const formatted = formatAioStream({
+        filename: "Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv",
+        sizeBytes: 4500000000,
+        indexer: "Mon Cloud",
+        url: "http://example.com/stream"
+    });
+
+    assert.ok(formatted && formatted.name, "Le flux doit être généré");
+    // Vérification que (FR SUB) ou (FR Dub) n'apparaît plus dans la ligne de badge
+    assert.ok(!formatted.name.includes("(FR SUB)"), "Ne doit pas contenir (FR SUB)");
+    assert.ok(!formatted.name.includes("(FR Dub)"), "Ne doit pas contenir (FR Dub)");
+    // Vérification que le nom de fichier est présent dans la colonne de droite au lieu de 'Mon cloud'
+    assert.ok(formatted.title.includes("📄 Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv"), "Doit afficher le nom du fichier");
+    assert.ok(!formatted.title.includes("Mon Cloud"), "Ne doit plus afficher 'Mon Cloud'");
+});
+
+test("Helpers - filterAndSortStreams filters by resolution, language and limits", () => {
+    const { filterAndSortStreams } = require("../lib/helpers");
+    const sampleStreams = [
+        {
+            name: "CinéCloud FR\n1080p",
+            description: "Gladiator II\n1080p • x264\n💾 4.00 GB • 250 👤\n🇫🇷 MULTI\n⚡ Prowlarr",
+            _size: 4 * 1024 * 1024 * 1024,
+            _resolution: "1080p",
+            _seeders: 250,
+            _lang: "multi"
+        },
+        {
+            name: "CinéCloud FR\n4k",
+            description: "Gladiator II\n4k • HEVC\n💾 18.00 GB • 100 👤\n🇫🇷 VFF\n⚡ Prowlarr",
+            _size: 18 * 1024 * 1024 * 1024,
+            _resolution: "4k",
+            _seeders: 100,
+            _lang: "vff"
+        },
+        {
+            name: "CinéCloud FR\n720p",
+            description: "Gladiator II\n720p • x264\n💾 2.00 GB • 50 👤\n🌐 Inconnu\n⚡ Prowlarr",
+            _size: 2 * 1024 * 1024 * 1024,
+            _resolution: "720p",
+            _seeders: 50,
+            _lang: "unknown"
+        },
+        {
+            name: "CinéCloud FR\n480p",
+            description: "Gladiator II\n480p • XviD\n💾 0.80 GB • 10 👤\n🇫🇷 VF\n⚡ Prowlarr",
+            _size: 800 * 1024 * 1024,
+            _resolution: "480p",
+            _seeders: 10,
+            _lang: "vf"
+        }
+    ];
+
+    // 1. Filtrage exclusion résolution (ex: exclure 480p)
+    const filteredRes = filterAndSortStreams(sampleStreams, { resolutions: "4k,1080p,720p" });
+    assert.equal(filteredRes.some(s => s._resolution === "480p"), false, "480p doit être exclu");
+
+    // 2. Réordonnancement : 1080p en premier
+    const reordered = filterAndSortStreams(sampleStreams, { resolutions: "1080p,4k,720p,480p" });
+    assert.equal(reordered[0]._resolution, "1080p", "1080p doit être en première position");
+
+    // 3. Masquer les langues inconnues
+    const noUnknown = filterAndSortStreams(sampleStreams, { hideUnknownLanguages: true });
+    assert.equal(noUnknown.some(s => s._lang === "unknown"), false, "Les langues inconnues doivent être filtrées");
+
+    // 4. Tri par taille décroissante
+    const bySizeDesc = filterAndSortStreams(sampleStreams, { sortBy: "size" });
+    assert.equal(bySizeDesc[0]._resolution, "4k", "Le plus gros fichier (18 Go) doit être en premier");
+
+    // 5. Limite de taille max (ex: max 10 Go -> exclut le 4k de 18 Go)
+    const limitedSize = filterAndSortStreams(sampleStreams, { maxSizeGb: 10 });
+    assert.equal(limitedSize.some(s => s._size > 10 * 1024 * 1024 * 1024), false, "Les fichiers > 10 Go doivent être exclus");
+
+    // 6. Limite de nombre de flux (ex: max 2 flux)
+    const limitedCount = filterAndSortStreams(sampleStreams, { maxStreams: 2 });
+    assert.equal(limitedCount.length, 2, "Doit limiter à 2 flux");
+});
+
+test("Helpers - resolveKitsuMeta resolves kitsu anime IDs to title and meta", async () => {
+    const { resolveKitsuMeta } = require("../lib/helpers");
+    const meta = await resolveKitsuMeta("12345", "series");
+    assert.ok(meta, "Doit renvoyer un objet de métadonnées");
+    assert.ok(typeof meta.title === "string", "Le titre doit être une chaîne de caractères");
+});
+
+test("Logger - In-memory circular log buffer and console interceptor", () => {
+    const { addLog, getLogs, clearLogs } = require("../lib/logger");
+    clearLogs();
+
+    addLog("INFO", "TestMod", "Message d'information test");
+    addLog("WARN", "TestMod", "Avertissement test");
+    addLog("ERROR", "ProxyMod", "Erreur réseau simulée");
+
+    const all = getLogs();
+    assert.equal(all.length, 3, "Doit contenir 3 logs");
+
+    const errors = getLogs({ level: "ERROR" });
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].module, "ProxyMod");
+
+    const searched = getLogs({ search: "réseau" });
+    assert.equal(searched.length, 1);
+
+    clearLogs();
+    assert.equal(getLogs().length, 0, "Doit être vidé après clearLogs");
+});
+
+test("Admin & DB - System settings and stats functions", () => {
+    const { getSystemSettings, updateSystemSettings, getUserStats } = require("../lib/db");
+    const initial = getSystemSettings();
+    assert.ok(initial.httpTimeoutMs >= 5000, "Le timeout HTTP doit avoir une valeur par défaut raisonnable");
+
+    const updated = updateSystemSettings({ httpTimeoutMs: 12000, prowlarrTimeoutMs: 9000 });
+    assert.equal(updated.httpTimeoutMs, 12000);
+    assert.equal(updated.prowlarrTimeoutMs, 9000);
+
+    const stats = getUserStats();
+    assert.ok(typeof stats.totalUsers === "number", "Stats totalUsers doit être un nombre");
+    assert.ok(typeof stats.totalCachedTorrents === "number", "Stats totalCachedTorrents doit être un nombre");
+});
+
+test("Server - Public status and Admin API endpoints", async () => {
+    const app = require("../index");
+    const request = require("node:http");
+
+    // Démarrage d'un serveur de test éphémère
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+        const axios = require("axios");
+
+        // 1. GET /api/status/warp
+        const resWarp = await axios.get(`${base}/api/status/warp`);
+        assert.equal(resWarp.status, 200);
+        assert.ok("active" in resWarp.data);
+        assert.ok("mode" in resWarp.data);
+
+        // 2. GET /api/stats
+        const resStats = await axios.get(`${base}/api/stats`);
+        assert.equal(resStats.status, 200);
+        assert.ok("totalUsers" in resStats.data);
+
+        // 3. POST /api/check/alldebrid avec clé vide -> valide: false
+        const resAdCheck = await axios.post(`${base}/api/check/alldebrid`, { apiKey: "" });
+        assert.equal(resAdCheck.status, 200);
+        assert.equal(resAdCheck.data.valid, false);
+
+        // 4. POST /api/admin/login échec
+        try {
+            await axios.post(`${base}/api/admin/login`, { password: "mauvais_password" });
+            assert.fail("Doit lever une erreur 401");
+        } catch (err) {
+            assert.equal(err.response?.status, 401);
+        }
+
+        // 5. POST /api/admin/login succès
+        const resLogin = await axios.post(`${base}/api/admin/login`, { password: process.env.ADMIN_PASSWORD || "admin123" });
+        assert.equal(resLogin.status, 200);
+        assert.ok(resLogin.data.success);
+        assert.ok(resLogin.data.token);
+        const adminToken = resLogin.data.token;
+
+        // 6. GET /api/admin/stats avec token
+        const resAdminStats = await axios.get(`${base}/api/admin/stats`, {
+            headers: { "x-admin-token": adminToken }
+        });
+        assert.equal(resAdminStats.status, 200);
+        assert.ok(resAdminStats.data.uptimeSeconds >= 0);
+
+        // 7. GET /api/admin/logs avec token
+        const resAdminLogs = await axios.get(`${base}/api/admin/logs`, {
+            headers: { "x-admin-token": adminToken }
+        });
+        assert.equal(resAdminLogs.status, 200);
+        assert.ok(Array.isArray(resAdminLogs.data));
+
+        // 8. GET /admin interface HTML
+        const resAdminHtml = await axios.get(`${base}/admin`);
+        assert.equal(resAdminHtml.status, 200);
+        assert.ok(resAdminHtml.data.includes("Panneau d'Administration"));
+
+        // 9. Enregistrement utilisateur avec pseudo et nouvelles options
+        const uniquePseudo = "Testeur_" + Date.now();
+        const resReg = await axios.post(`${base}/api/user/register`, {
+            apiKey: "dummy_alldebrid_api_key_test",
+            password: "monSuperMotDePasse123",
+            pseudo: uniquePseudo,
+            resolutions: "1080p,4k",
+            hideUnknownLanguages: true,
+            sortBy: "size"
+        });
+        assert.equal(resReg.status, 200);
+        assert.ok(resReg.data.uuid);
+        const userUuid = resReg.data.uuid;
+
+        // Vérification du manifest avec le pseudo dans le nom
+        const resManifest = await axios.get(`${base}/${userUuid}/manifest.json`);
+        assert.equal(resManifest.status, 200);
+        assert.ok(resManifest.data.name.includes(uniquePseudo), "Le nom de l'addon doit inclure le pseudo");
+        assert.ok(resManifest.data.description.includes("AllDebrid haute performance"), "Description officielle présente");
+
+    } finally {
+        server.close();
+    }
+});
+
 

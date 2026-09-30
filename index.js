@@ -5,12 +5,39 @@ const crypto = require("node:crypto");
 const axios = require("axios");
 const rateLimit = require("express-rate-limit");
 
-const { loadCache, createUser, getUserByUuid, updateUserConfig, updateUserPassword, deleteUser, purgeOldCachedTorrents } = require("./lib/db");
+const {
+    initConsoleInterceptors,
+    getLogs,
+    clearLogs
+} = require("./lib/logger");
+
+// Interception des logs console pour le terminal en direct du panneau d'administration
+initConsoleInterceptors();
+
+const {
+    loadCache,
+    createUser,
+    getUserByUuid,
+    updateUserConfig,
+    updateUserPassword,
+    deleteUser,
+    purgeOldCachedTorrents,
+    getUserStats,
+    getAllUsersAdmin,
+    adminDeleteUser,
+    getSystemSettings,
+    updateSystemSettings,
+    clearCachedTorrents,
+    clearMoviesCache
+} = require("./lib/db");
+
 const { hashPassword, verifyPassword, encryptConfig, decryptConfig } = require("./lib/crypto");
 const { handleManifest, handleCatalog, handleMeta, handleStream } = require("./lib/stremio");
 const { handleResolve } = require("./lib/resolver");
 const { startProwlarrWorker, stopProwlarrWorker } = require("./lib/prowlarr-worker");
-const { ALL_CATALOGS } = require("./lib/helpers");
+const { ALL_CATALOGS, checkTmdbKey } = require("./lib/helpers");
+const { getWarpStatus, checkAllDebridKey } = require("./lib/alldebrid");
+const { LOGO_SVG, BACKGROUND_SVG, renderConfigPage, renderAdminPage } = require("./lib/ui");
 
 function getRequestProtocol(req) {
     const forwarded = req.headers["x-forwarded-proto"];
@@ -51,6 +78,18 @@ const authLimiter = rateLimit({
     message: { error: "Trop de tentatives d'authentification. Veuillez patienter 15 minutes." }
 });
 
+// Authentification Administrateur
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+const activeAdminTokens = new Set();
+
+function requireAdmin(req, res, next) {
+    const token = req.headers["x-admin-token"];
+    if (!token || !activeAdminTokens.has(token)) {
+        return res.status(401).json({ error: "Session administrateur non autorisée ou expirée." });
+    }
+    next();
+}
+
 // Récupère la configuration d'un utilisateur par son UUID
 function getUserConfig(uuid) {
     if (!uuid || uuid.length !== 36) return null;
@@ -71,7 +110,23 @@ function getUserConfig(uuid) {
 // Inscription / Création d'un nouvel Addon sécurisé
 app.post("/api/user/register", authLimiter, async (req, res) => {
     try {
-        const { apiKey, password, tmdbKey, cacheMode, langPref, prowlarrUrl, prowlarrKey, enabledCatalogs } = req.body;
+        const {
+            apiKey,
+            password,
+            pseudo,
+            tmdbKey,
+            cacheMode,
+            langPref,
+            resolutions,
+            hideUnknownLanguages,
+            sortBy,
+            maxSizeGb,
+            maxStreams,
+            prowlarrUrl,
+            prowlarrKey,
+            enabledCatalogs
+        } = req.body;
+
         if (!apiKey || typeof apiKey !== "string" || apiKey.trim() === "") {
             return res.status(400).json({ error: "La clé API AllDebrid est requise." });
         }
@@ -83,16 +138,22 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
         const passwordHash = hashPassword(password);
         const configData = {
             apiKey: apiKey.trim(),
+            pseudo: (pseudo && pseudo.trim()) || "",
             tmdbKey: (tmdbKey && tmdbKey.trim()) || "default",
             cacheMode: cacheMode === "off" ? "off" : "on",
             langPref: langPref || "multi_vff,vff,vfi,multi,vf,vostfr",
+            resolutions: resolutions || "4k,1080p,720p,480p",
+            hideUnknownLanguages: Boolean(hideUnknownLanguages),
+            sortBy: sortBy === "size" || sortBy === "size_asc" ? sortBy : "quality",
+            maxSizeGb: Number(maxSizeGb) || 0,
+            maxStreams: Number(maxStreams) || 0,
             prowlarrUrl: (prowlarrUrl && prowlarrUrl.trim()) || "http://prowlarr:9696",
             prowlarrKey: (prowlarrKey && prowlarrKey.trim()) || "off",
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : ALL_CATALOGS.map(c => c.id))
         };
 
         const configEncrypted = encryptConfig(configData);
-        createUser(uuid, passwordHash, configEncrypted);
+        createUser(uuid, passwordHash, configEncrypted, configData.pseudo);
 
         const protocol = getRequestProtocol(req);
         const host = req.get("host");
@@ -103,7 +164,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
         stopProwlarrWorker();
         startProwlarrWorker();
 
-        console.log(`[User] Nouvel addon créé avec succès : UUID ${uuid}`);
+        console.log(`[User] Nouvel addon créé avec succès : UUID ${uuid}${configData.pseudo ? ` (${configData.pseudo})` : ""}`);
         return res.json({
             success: true,
             uuid,
@@ -142,6 +203,7 @@ app.post("/api/user/login", authLimiter, (req, res) => {
             stremioUrl,
             config: {
                 ...config,
+                pseudo: user.pseudo || config.pseudo || "",
                 prowlarrUrl: config.prowlarrUrl || "http://prowlarr:9696",
                 apiKeyPreview: config.apiKey ? `${config.apiKey.slice(0, 4)}...${config.apiKey.slice(-4)}` : ""
             }
@@ -151,10 +213,28 @@ app.post("/api/user/login", authLimiter, (req, res) => {
     }
 });
 
-// Mise à jour de la configuration existante (sans changer l'URL d'installation !)
+// Mise à jour de la configuration existante
 app.post("/api/user/update", authLimiter, (req, res) => {
     try {
-        const { uuid, password, apiKey, newPassword, tmdbKey, cacheMode, langPref, prowlarrUrl, prowlarrKey, enabledCatalogs } = req.body;
+        const {
+            uuid,
+            password,
+            pseudo,
+            apiKey,
+            newPassword,
+            tmdbKey,
+            cacheMode,
+            langPref,
+            resolutions,
+            hideUnknownLanguages,
+            sortBy,
+            maxSizeGb,
+            maxStreams,
+            prowlarrUrl,
+            prowlarrKey,
+            enabledCatalogs
+        } = req.body;
+
         if (!uuid || !password) {
             return res.status(400).json({ error: "UUID et mot de passe requis." });
         }
@@ -167,15 +247,21 @@ app.post("/api/user/update", authLimiter, (req, res) => {
         const currentConfig = decryptConfig(user.configEncrypted);
         const updatedConfig = {
             apiKey: (apiKey && apiKey.trim()) || currentConfig.apiKey,
+            pseudo: pseudo !== undefined ? pseudo.trim() : (user.pseudo || currentConfig.pseudo || ""),
             tmdbKey: tmdbKey !== undefined ? tmdbKey.trim() : currentConfig.tmdbKey,
-            cacheMode: cacheMode === "off" ? "off" : "on",
-            langPref: langPref || currentConfig.langPref,
+            cacheMode: cacheMode === "off" ? "off" : (cacheMode === "on" ? "on" : currentConfig.cacheMode || "on"),
+            langPref: langPref !== undefined ? langPref : currentConfig.langPref,
+            resolutions: resolutions !== undefined ? resolutions : (currentConfig.resolutions || "4k,1080p,720p,480p"),
+            hideUnknownLanguages: hideUnknownLanguages !== undefined ? Boolean(hideUnknownLanguages) : Boolean(currentConfig.hideUnknownLanguages),
+            sortBy: sortBy !== undefined ? sortBy : (currentConfig.sortBy || "quality"),
+            maxSizeGb: maxSizeGb !== undefined ? (Number(maxSizeGb) || 0) : (currentConfig.maxSizeGb || 0),
+            maxStreams: maxStreams !== undefined ? (Number(maxStreams) || 0) : (currentConfig.maxStreams || 0),
             prowlarrUrl: (prowlarrUrl && prowlarrUrl.trim()) || currentConfig.prowlarrUrl || "http://prowlarr:9696",
             prowlarrKey: prowlarrKey !== undefined ? prowlarrKey.trim() : currentConfig.prowlarrKey,
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : currentConfig.enabledCatalogs)
         };
 
-        updateUserConfig(uuid.trim(), encryptConfig(updatedConfig));
+        updateUserConfig(uuid.trim(), encryptConfig(updatedConfig), updatedConfig.pseudo);
 
         if (newPassword && typeof newPassword === "string" && newPassword.length >= 4) {
             updateUserPassword(uuid.trim(), hashPassword(newPassword));
@@ -214,12 +300,102 @@ app.post("/api/user/delete", authLimiter, (req, res) => {
 });
 
 // =============================================================================
-// 2. ENDPOINT DE RÉSOLUTION LAZY (VALIDATION & FAILOVER INSTANTANÉ)
+// 2. ENDPOINTS PUBLICS DE STATUT & VÉRIFICATION
+// =============================================================================
+
+app.get("/api/status/warp", (req, res) => {
+    res.json(getWarpStatus());
+});
+
+app.post("/api/check/alldebrid", async (req, res) => {
+    const { apiKey } = req.body;
+    const result = await checkAllDebridKey(apiKey);
+    res.json(result);
+});
+
+app.post("/api/check/tmdb", async (req, res) => {
+    const { tmdbKey } = req.body;
+    const result = await checkTmdbKey(tmdbKey);
+    res.json(result);
+});
+
+app.get("/api/stats", (req, res) => {
+    res.json(getUserStats());
+});
+
+// =============================================================================
+// 3. ENDPOINTS DU PANNEAU D'ADMINISTRATION
+// =============================================================================
+
+app.post("/api/admin/login", authLimiter, (req, res) => {
+    const { password } = req.body;
+    if (password && password === ADMIN_PASSWORD) {
+        const token = crypto.randomBytes(24).toString("hex");
+        activeAdminTokens.add(token);
+        return res.json({ success: true, token });
+    }
+    return res.status(401).json({ error: "Mot de passe administrateur incorrect." });
+});
+
+app.get("/api/admin/stats", requireAdmin, (req, res) => {
+    const stats = getUserStats();
+    const warp = getWarpStatus();
+    res.json({
+        ...stats,
+        warp,
+        nodeVersion: process.version,
+        memoryRssMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
+        uptimeSeconds: Math.round(process.uptime())
+    });
+});
+
+app.get("/api/admin/users", requireAdmin, (req, res) => {
+    res.json(getAllUsersAdmin());
+});
+
+app.delete("/api/admin/users/:uuid", requireAdmin, (req, res) => {
+    adminDeleteUser(req.params.uuid);
+    res.json({ success: true });
+});
+
+app.get("/api/admin/logs", requireAdmin, (req, res) => {
+    const { level, limit, search } = req.query;
+    res.json(getLogs({ level, limit, search }));
+});
+
+app.post("/api/admin/logs/clear", requireAdmin, (req, res) => {
+    clearLogs();
+    res.json({ success: true });
+});
+
+app.get("/api/admin/settings", requireAdmin, (req, res) => {
+    res.json(getSystemSettings());
+});
+
+app.post("/api/admin/settings", requireAdmin, (req, res) => {
+    const updated = updateSystemSettings(req.body);
+    res.json({ success: true, settings: updated });
+});
+
+app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
+    const { target } = req.body;
+    let cleared = 0;
+    if (target === "torrents" || target === "all") {
+        cleared += clearCachedTorrents();
+    }
+    if (target === "movies" || target === "all") {
+        cleared += clearMoviesCache();
+    }
+    res.json({ success: true, cleared });
+});
+
+// =============================================================================
+// 4. ENDPOINT DE RÉSOLUTION LAZY (VALIDATION & FAILOVER INSTANTANÉ)
 // =============================================================================
 app.get("/resolve/:userRef/:imdbId/:fileRef(*)", handleResolve);
 
 // =============================================================================
-// 3. ROUTES STREMIO SÉCURISÉES (FORMAT MODERNE /:uuid/*)
+// 5. ROUTES STREMIO SÉCURISÉES (FORMAT MODERNE /:uuid/*)
 // =============================================================================
 
 app.get("/:uuid/manifest.json", (req, res) => {
@@ -280,7 +456,7 @@ app.get("/:uuid/stream/:type/:id.json", async (req, res) => {
 });
 
 // =============================================================================
-// 4. RÉTRO-COMPATIBILITÉ POUR LES ANCIENNES URLS (6 PARAMÈTRES)
+// 6. RÉTRO-COMPATIBILITÉ POUR LES ANCIENNES URLS (6 PARAMÈTRES)
 // =============================================================================
 
 function parseLegacyConfig(params) {
@@ -347,646 +523,8 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/st
 });
 
 // =============================================================================
-// 5. INTERFACE WEB OPTIMISÉE • "CinéCloud FR" (/ et /configure)
+// 7. INTERFACE WEB & STATIQUES (STREAM-FUSION & ADMIN)
 // =============================================================================
-
-function renderHtmlPage(initialTab = "register", initialUuid = "") {
-    return `<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CinéCloud FR • Addon AllDebrid Stremio & Nuvio</title>
-    <style>
-        :root {
-            --bg: #090d16;
-            --card-bg: rgba(22, 30, 49, 0.88);
-            --border: #2a374e;
-            --accent: #38bdf8;
-            --accent-hover: #0284c7;
-            --text: #f8fafc;
-            --text-muted: #94a3b8;
-            --success: #10b981;
-            --danger: #ef4444;
-            --danger-hover: #dc2626;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: radial-gradient(circle at 50% 0%, #172554 0%, var(--bg) 80%);
-            color: var(--text);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 24px 16px;
-        }
-        .container {
-            width: 100%;
-            max-width: 620px;
-            background: var(--card-bg);
-            backdrop-filter: blur(20px);
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            padding: 36px 32px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
-        }
-        .brand-header {
-            text-align: center;
-            margin-bottom: 28px;
-        }
-        .logo-wrapper {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 72px;
-            height: 72px;
-            border-radius: 20px;
-            background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
-            box-shadow: 0 10px 25px rgba(56, 189, 248, 0.4);
-            margin-bottom: 14px;
-        }
-        .logo-svg {
-            width: 44px;
-            height: 44px;
-            fill: #ffffff;
-        }
-        .brand-title {
-            font-size: 28px;
-            font-weight: 800;
-            letter-spacing: -0.5px;
-            background: linear-gradient(to right, #ffffff, #93c5fd);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 4px;
-        }
-        .brand-subtitle {
-            font-size: 14px;
-            color: var(--text-muted);
-        }
-        .tabs {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 24px;
-            background: #0f172a;
-            padding: 5px;
-            border-radius: 12px;
-            border: 1px solid var(--border);
-        }
-        .tab-btn {
-            flex: 1;
-            padding: 11px;
-            background: transparent;
-            border: none;
-            border-radius: 8px;
-            color: var(--text-muted);
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .tab-btn.active {
-            background: #1e293b;
-            color: var(--text);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-        .form-group {
-            margin-bottom: 18px;
-        }
-        label {
-            display: block;
-            font-size: 13px;
-            font-weight: 600;
-            margin-bottom: 7px;
-            color: #cbd5e1;
-        }
-        input[type="text"], input[type="password"], select.form-select {
-            width: 100%;
-            padding: 13px 15px;
-            background: #090d16;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            color: var(--text);
-            font-size: 14px;
-            outline: none;
-            transition: border-color 0.2s, box-shadow 0.2s;
-        }
-        select.form-select option {
-            background: #0f172a;
-            color: var(--text);
-        }
-        input:focus {
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-        }
-        .hint {
-            font-size: 12px;
-            color: var(--text-muted);
-            margin-top: 5px;
-        }
-        .checkbox-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 8px;
-        }
-        .checkbox-item {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            font-size: 13px;
-            color: #e2e8f0;
-            background: #0f172a;
-            padding: 9px 12px;
-            border-radius: 8px;
-            border: 1px solid #1e293b;
-            cursor: pointer;
-            transition: border-color 0.2s;
-        }
-        .checkbox-item:hover {
-            border-color: #3b82f6;
-        }
-        .btn {
-            width: 100%;
-            padding: 14px;
-            background: var(--accent);
-            color: #090d16;
-            border: none;
-            border-radius: 10px;
-            font-size: 15px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-top: 8px;
-        }
-        .btn:hover {
-            background: var(--accent-hover);
-            color: #ffffff;
-        }
-        .btn-danger {
-            background: rgba(239, 68, 68, 0.15);
-            color: #fca5a5;
-            border: 1px solid rgba(239, 68, 68, 0.4);
-            margin-top: 14px;
-        }
-        .btn-danger:hover {
-            background: var(--danger);
-            color: #ffffff;
-        }
-        .install-card {
-            background: linear-gradient(145deg, #101b33 0%, #0d1527 100%);
-            border: 1px solid #2563eb;
-            border-radius: 14px;
-            padding: 20px;
-            margin-bottom: 24px;
-            box-shadow: 0 10px 30px rgba(37, 99, 235, 0.15);
-        }
-        .install-badge {
-            display: inline-block;
-            background: rgba(16, 185, 129, 0.2);
-            color: #6ee7b7;
-            font-size: 12px;
-            font-weight: 700;
-            padding: 4px 10px;
-            border-radius: 6px;
-            margin-bottom: 12px;
-        }
-        .url-box {
-            font-family: monospace;
-            font-size: 12px;
-            background: #090d16;
-            border: 1px solid var(--border);
-            padding: 11px;
-            border-radius: 8px;
-            color: #7dd3fc;
-            word-break: break-all;
-            margin-bottom: 14px;
-            user-select: all;
-        }
-        .action-row {
-            display: flex;
-            gap: 10px;
-        }
-        .btn-secondary {
-            flex: 1;
-            padding: 11px;
-            background: #1e293b;
-            color: #ffffff;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            text-align: center;
-            text-decoration: none;
-            font-size: 13px;
-            transition: all 0.2s;
-        }
-        .btn-secondary:hover {
-            background: #334155;
-        }
-        .alert {
-            display: none;
-            padding: 13px 16px;
-            border-radius: 10px;
-            font-size: 13px;
-            margin-bottom: 18px;
-        }
-        .alert-error {
-            background: rgba(239, 68, 68, 0.2);
-            border: 1px solid var(--danger);
-            color: #fca5a5;
-        }
-        .alert-success {
-            background: rgba(16, 185, 129, 0.2);
-            border: 1px solid var(--success);
-            color: #6ee7b7;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="brand-header">
-            <div class="logo-wrapper">
-                <svg class="logo-svg" viewBox="0 0 24 24">
-                    <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM10 16.5v-7l6 3.5-6 3.5z"/>
-                </svg>
-            </div>
-            <div class="brand-title">CinéCloud FR</div>
-            <div class="brand-subtitle">Addon AllDebrid & Stremio / Nuvio Haute Performance</div>
-        </div>
-
-        <div class="tabs">
-            <button class="tab-btn ${initialTab === "register" ? "active" : ""}" onclick="switchTab('register')">Nouveau Compte</button>
-            <button class="tab-btn ${initialTab === "configure" ? "active" : ""}" onclick="switchTab('configure')">Gérer mes Réglages</button>
-        </div>
-
-        <div id="alertBox" class="alert"></div>
-
-        <!-- TAB 1 : NOUVEAU COMPTE -->
-        <div id="registerTab" style="display: ${initialTab === "register" ? "block" : "none"};">
-            <div class="form-group">
-                <label>Clé API AllDebrid *</label>
-                <input type="password" id="regApiKey" placeholder="Ex: a1b2c3d4e5f6...">
-                <div class="hint">Récupérez votre clé sur <a href="https://alldebrid.com/apikeys" target="_blank" style="color:var(--accent);">alldebrid.com/apikeys</a></div>
-            </div>
-            <div class="form-group">
-                <label>Mot de passe *</label>
-                <input type="password" id="regPassword" placeholder="Minimum 4 caractères pour sécuriser vos réglages">
-            </div>
-            <div class="form-group">
-                <label>Clé TMDB (Optionnel)</label>
-                <input type="text" id="regTmdbKey" placeholder="Laissez vide pour utiliser la clé par défaut">
-            </div>
-            <div class="form-group">
-                <label>URL Prowlarr (Optionnel)</label>
-                <input type="text" id="regProwlarrUrl" value="http://prowlarr:9696" placeholder="http://prowlarr:9696">
-            </div>
-            <div class="form-group">
-                <label>Clé API Prowlarr (Optionnel)</label>
-                <input type="text" id="regProwlarrKey" placeholder="Laissez vide si non utilisé">
-            </div>
-            <div class="form-group">
-                <label>Mode de Cache Torrent</label>
-                <select id="regCacheMode" class="form-select">
-                    <option value="on" selected>Activé (Prowlarr, Torrentio & Cache local)</option>
-                    <option value="off">Désactivé (Uniquement mes fichiers cloud)</option>
-                </select>
-                <div class="hint">Active le scraping et la disponibilité des torrents instantanés.</div>
-            </div>
-            <div class="form-group">
-                <label>Priorité Linguistique (Ordre des flux)</label>
-                <input type="text" id="regLangPref" value="multi_vff,vff,vfi,multi,vf,vostfr" placeholder="multi_vff,vff,vfi,multi,vf,vostfr">
-                <div class="hint">Ordre de préférence séparé par des virgules (ex: multi_vff,vff,vfi,multi,vf,vostfr)</div>
-            </div>
-            <div class="form-group">
-                <label>Catalogues à activer :</label>
-                <div class="checkbox-grid">
-                    ${ALL_CATALOGS.map(c => `
-                        <label class="checkbox-item">
-                            <input type="checkbox" class="regCatCheck" value="${c.id}" checked>
-                            ${c.name}
-                        </label>
-                    `).join("")}
-                </div>
-            </div>
-            <button class="btn" onclick="submitRegister()">Générer mon Addon Stremio</button>
-
-            <div id="registerResult" style="display:none; margin-top:24px;">
-                <div class="install-card">
-                    <div class="install-badge">✅ Addon généré avec succès !</div>
-                    <label style="color:#94a3b8; font-size:12px;">Identifiant Unique (UUID) :</label>
-                    <div class="url-box" id="resUuid"></div>
-                    <label style="color:#94a3b8; font-size:12px;">URL d'Installation Stremio :</label>
-                    <div class="url-box" id="resManifest"></div>
-                    <div class="action-row">
-                        <a id="resStremioBtn" class="btn-secondary" style="background:#0284c7; border-color:#0284c7;" href="#">Installer dans Stremio</a>
-                        <button class="btn-secondary" onclick="copyText('resManifest')">Copier l'URL</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- TAB 2 : GÉRER MES RÉGLAGES -->
-        <div id="configureTab" style="display: ${initialTab === "configure" ? "block" : "none"};">
-            <div id="loginStep">
-                <div class="form-group">
-                    <label>Votre UUID Addon *</label>
-                    <input type="text" id="cfgUuid" value="${initialUuid || ""}" placeholder="Ex: 12345678-1234-...">
-                </div>
-                <div class="form-group">
-                    <label>Votre Mot de passe *</label>
-                    <input type="password" id="cfgPassword" placeholder="Mot de passe choisi à la création">
-                </div>
-                <button class="btn" onclick="submitLogin()">Accéder à mes réglages</button>
-            </div>
-
-            <div id="editStep" style="display:none;">
-                <!-- CARTE D'INSTALLATION RECHARGÉE -->
-                <div class="install-card">
-                    <div class="install-badge">⚡ Addon Actif & Connecté</div>
-                    <label style="color:#94a3b8; font-size:12px;">URL d'Installation Stremio :</label>
-                    <div class="url-box" id="cfgManifestDisplay"></div>
-                    <div class="action-row">
-                        <a id="cfgStremioBtn" class="btn-secondary" style="background:#0284c7; border-color:#0284c7;" href="#">Installer dans Stremio</a>
-                        <button class="btn-secondary" onclick="copyText('cfgManifestDisplay')">Copier l'URL</button>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label>Clé API AllDebrid</label>
-                    <input type="text" id="editApiKey" placeholder="Laissez vide pour conserver l'actuelle">
-                </div>
-                <div class="form-group">
-                    <label>Nouveau mot de passe (Optionnel)</label>
-                    <input type="password" id="editNewPassword" placeholder="Laissez vide pour ne pas changer">
-                </div>
-                <div class="form-group">
-                    <label>Clé TMDB</label>
-                    <input type="text" id="editTmdbKey">
-                </div>
-                <div class="form-group">
-                    <label>URL Prowlarr</label>
-                    <input type="text" id="editProwlarrUrl" placeholder="http://prowlarr:9696">
-                </div>
-                <div class="form-group">
-                    <label>Clé API Prowlarr</label>
-                    <input type="text" id="editProwlarrKey">
-                </div>
-                <div class="form-group">
-                    <label>Mode de Cache Torrent</label>
-                    <select id="editCacheMode" class="form-select">
-                        <option value="on">Activé (Prowlarr, Torrentio & Cache local)</option>
-                        <option value="off">Désactivé (Uniquement mes fichiers cloud)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Priorité Linguistique</label>
-                    <input type="text" id="editLangPref" placeholder="multi_vff,vff,vfi,multi,vf,vostfr">
-                    <div class="hint">Ordre de préférence séparé par des virgules</div>
-                </div>
-                <div class="form-group">
-                    <label>Catalogues actifs :</label>
-                    <div class="checkbox-grid">
-                        ${ALL_CATALOGS.map(c => `
-                            <label class="checkbox-item">
-                                <input type="checkbox" class="editCatCheck" value="${c.id}">
-                                ${c.name}
-                            </label>
-                        `).join("")}
-                    </div>
-                </div>
-                <button class="btn" onclick="submitUpdate()">Enregistrer les modifications</button>
-                <button class="btn btn-danger" onclick="submitDelete()">Supprimer mon compte & Réinitialiser</button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        function switchTab(tab) {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            if (tab === 'register') {
-                document.querySelector('.tab-btn:first-child').classList.add('active');
-                document.getElementById('registerTab').style.display = 'block';
-                document.getElementById('configureTab').style.display = 'none';
-            } else {
-                document.querySelector('.tab-btn:last-child').classList.add('active');
-                document.getElementById('registerTab').style.display = 'none';
-                document.getElementById('configureTab').style.display = 'block';
-            }
-            hideAlert();
-        }
-
-        function showAlert(msg, isError) {
-            const b = document.getElementById('alertBox');
-            b.innerText = msg;
-            b.className = 'alert ' + (isError ? 'alert-error' : 'alert-success');
-            b.style.display = 'block';
-        }
-
-        function hideAlert() {
-            document.getElementById('alertBox').style.display = 'none';
-        }
-
-        function copyText(elemId) {
-            const text = document.getElementById(elemId).innerText;
-            navigator.clipboard.writeText(text).then(() => alert("URL copiée dans le presse-papier !"));
-        }
-
-        let activeUuid = null;
-        let activePass = null;
-
-        async function submitRegister() {
-            hideAlert();
-            const apiKey = document.getElementById('regApiKey').value.trim();
-            const password = document.getElementById('regPassword').value;
-            const tmdbKey = document.getElementById('regTmdbKey').value.trim();
-            const cacheMode = document.getElementById('regCacheMode').value;
-            const langPref = document.getElementById('regLangPref').value.trim();
-            const prowlarrUrl = document.getElementById('regProwlarrUrl').value.trim();
-            const prowlarrKey = document.getElementById('regProwlarrKey').value.trim();
-            const enabledCatalogs = Array.from(document.querySelectorAll('.regCatCheck:checked')).map(c => c.value);
-
-            if (!apiKey || !password) {
-                return showAlert("La clé API AllDebrid et le mot de passe sont obligatoires.", true);
-            }
-
-            try {
-                const res = await fetch('/api/user/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ apiKey, password, tmdbKey, cacheMode, langPref, prowlarrUrl, prowlarrKey, enabledCatalogs })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || "Erreur de création");
-
-                document.getElementById('resUuid').innerText = data.uuid;
-                document.getElementById('resManifest').innerText = data.manifestUrl;
-                document.getElementById('resStremioBtn').href = data.stremioUrl;
-                document.getElementById('registerResult').style.display = 'block';
-                showAlert("Addon CinéCloud FR généré avec succès ! Conservez votre UUID.", false);
-            } catch (err) {
-                showAlert(err.message, true);
-            }
-        }
-
-        async function submitLogin() {
-            hideAlert();
-            const uuid = document.getElementById('cfgUuid').value.trim();
-            const password = document.getElementById('cfgPassword').value;
-
-            if (!uuid || !password) {
-                return showAlert("Veuillez renseigner votre UUID et votre mot de passe.", true);
-            }
-
-            try {
-                const res = await fetch('/api/user/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ uuid, password })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || "Erreur de connexion");
-
-                activeUuid = uuid;
-                activePass = password;
-
-                // Affichage de la carte d'installation dans la vue de gestion
-                document.getElementById('cfgManifestDisplay').innerText = data.manifestUrl;
-                document.getElementById('cfgStremioBtn').href = data.stremioUrl;
-
-                document.getElementById('editTmdbKey').value = data.config.tmdbKey || '';
-                document.getElementById('editCacheMode').value = data.config.cacheMode || 'on';
-                document.getElementById('editLangPref').value = data.config.langPref || 'multi_vff,vff,vfi,multi,vf,vostfr';
-                document.getElementById('editProwlarrUrl').value = data.config.prowlarrUrl || 'http://prowlarr:9696';
-                document.getElementById('editProwlarrKey').value = (data.config.prowlarrKey && data.config.prowlarrKey !== 'off') ? data.config.prowlarrKey : '';
-
-                const cats = data.config.enabledCatalogs || [];
-                document.querySelectorAll('.editCatCheck').forEach(cb => {
-                    cb.checked = cats.includes(cb.value);
-                });
-
-                document.getElementById('loginStep').style.display = 'none';
-                document.getElementById('editStep').style.display = 'block';
-                showAlert("Connexion réussie. Vos réglages et liens d'installation sont disponibles ci-dessous.", false);
-            } catch (err) {
-                showAlert(err.message, true);
-            }
-        }
-
-        async function submitUpdate() {
-            hideAlert();
-            const apiKey = document.getElementById('editApiKey').value.trim();
-            const newPassword = document.getElementById('editNewPassword').value;
-            const tmdbKey = document.getElementById('editTmdbKey').value.trim();
-            const cacheMode = document.getElementById('editCacheMode').value;
-            const langPref = document.getElementById('editLangPref').value.trim();
-            const prowlarrUrl = document.getElementById('editProwlarrUrl').value.trim();
-            const prowlarrKey = document.getElementById('editProwlarrKey').value.trim();
-            const enabledCatalogs = Array.from(document.querySelectorAll('.editCatCheck:checked')).map(c => c.value);
-
-            try {
-                const res = await fetch('/api/user/update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        uuid: activeUuid,
-                        password: activePass,
-                        apiKey: apiKey || undefined,
-                        newPassword: newPassword || undefined,
-                        tmdbKey,
-                        cacheMode,
-                        langPref,
-                        prowlarrUrl,
-                        prowlarrKey,
-                        enabledCatalogs
-                    })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || "Erreur de mise à jour");
-
-                if (newPassword) activePass = newPassword;
-                showAlert("Modifications enregistrées avec succès !", false);
-            } catch (err) {
-                showAlert(err.message, true);
-            }
-        }
-
-        async function submitDelete() {
-            if (!confirm("⚠️ Êtes-vous sûr de vouloir supprimer définitivement votre compte et votre configuration ? Votre addon cessera de fonctionner.")) {
-                return;
-            }
-
-            try {
-                const res = await fetch('/api/user/delete', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ uuid: activeUuid, password: activePass })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || "Erreur lors de la suppression");
-
-                alert("Compte et configuration supprimés avec succès.");
-                window.location.reload();
-            } catch (err) {
-                showAlert(err.message, true);
-            }
-        }
-
-        if ("${initialUuid || ""}") {
-            window.addEventListener('DOMContentLoaded', () => {
-                const passField = document.getElementById('cfgPassword');
-                if (passField) passField.focus();
-            });
-        }
-    </script>
-</body>
-</html>`;
-}
-
-const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#070a13"/>
-      <stop offset="50%" stop-color="#0c1322"/>
-      <stop offset="100%" stop-color="#162238"/>
-    </linearGradient>
-    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="100%" stop-color="#0284c7"/>
-    </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="14" result="blur"/>
-      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-    </filter>
-  </defs>
-  <rect width="512" height="512" rx="96" fill="url(#bgGrad)"/>
-  <rect x="12" y="12" width="488" height="488" rx="84" fill="none" stroke="url(#cyanGrad)" stroke-width="4" stroke-opacity="0.4"/>
-  <circle cx="256" cy="210" r="130" fill="#0284c7" opacity="0.15" filter="url(#glow)"/>
-  <path d="M374 246c0-42-34-76-76-76-12 0-23 3-33 8-16-29-47-48-83-48-52 0-94 42-94 94 0 6 1 12 2 18-32 9-56 38-56 74 0 42 34 76 76 76h260c38 0 68-30 68-68 0-35-26-64-64-78z" fill="url(#cyanGrad)"/>
-  <polygon points="236,252 236,332 304,292" fill="#090d16"/>
-  <path d="M140 180 L180 140 L210 140 L170 180 Z" fill="#ffffff" opacity="0.3"/>
-  <path d="M220 180 L260 140 L290 140 L250 180 Z" fill="#ffffff" opacity="0.3"/>
-  <text x="256" y="435" text-anchor="middle" fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="44" font-weight="900" letter-spacing="1">CINÉCLOUD</text>
-  <text x="256" y="470" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="700" letter-spacing="3">ALLDEBRID • FR</text>
-</svg>`;
-
-const BACKGROUND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
-  <defs>
-    <radialGradient id="bgRadial" cx="50%" cy="40%" r="70%">
-      <stop offset="0%" stop-color="#0f172a"/>
-      <stop offset="60%" stop-color="#070a12"/>
-      <stop offset="100%" stop-color="#020408"/>
-    </radialGradient>
-    <linearGradient id="cloudGlow" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.12"/>
-      <stop offset="100%" stop-color="#0284c7" stop-opacity="0.01"/>
-    </linearGradient>
-  </defs>
-  <rect width="1920" height="1080" fill="url(#bgRadial)"/>
-  <circle cx="960" cy="460" r="450" fill="url(#cloudGlow)"/>
-  <circle cx="400" cy="800" r="300" fill="url(#cloudGlow)"/>
-  <circle cx="1500" cy="300" r="250" fill="url(#cloudGlow)"/>
-</svg>`;
 
 app.get("/logo.png", (req, res) => {
     res.setHeader("Content-Type", "image/svg+xml");
@@ -1001,26 +539,30 @@ app.get("/background.png", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-    res.send(renderHtmlPage("register"));
+    res.send(renderConfigPage("register"));
 });
 
 app.get("/configure", (req, res) => {
-    res.send(renderHtmlPage("configure"));
+    res.send(renderConfigPage("configure"));
 });
 
 app.get("/:uuid/configure", (req, res) => {
-    res.send(renderHtmlPage("configure", req.params.uuid));
+    res.send(renderConfigPage("configure", req.params.uuid));
 });
 
 app.get("/:uuid", (req, res, next) => {
     if (req.params.uuid && req.params.uuid.length === 36 && req.params.uuid.includes("-")) {
-        return res.send(renderHtmlPage("configure", req.params.uuid));
+        return res.send(renderConfigPage("configure", req.params.uuid));
     }
     next();
 });
 
 app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/configure", (req, res) => {
     res.redirect("/configure");
+});
+
+app.get("/admin", (req, res) => {
+    res.send(renderAdminPage());
 });
 
 // Démarrage du worker RSS Prowlarr
@@ -1042,5 +584,6 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log(`[Server] Addon CinéCloud FR en écoute sur le port ${PORT}`);
         console.log(`[Server] Interface web accessible sur http://localhost:${PORT}`);
+        console.log(`[Server] Panneau d'administration sur http://localhost:${PORT}/admin`);
     });
 }
