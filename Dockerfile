@@ -1,9 +1,9 @@
 # ==============================================================================
 # Dockerfile pour Nuvio-Alldebrid Addon
-# Image de base légère et sécurisée basée sur Node.js 22 Alpine Linux
+# Image de base légère et sécurisée basée sur Node.js 24 Alpine Linux
 # ==============================================================================
 
-FROM node:22-alpine
+FROM node:24-alpine
 
 # Définition des variables d'environnement de production
 ENV NODE_ENV=production \

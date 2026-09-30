@@ -34,6 +34,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Run unit tests
+        run: node --test
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 

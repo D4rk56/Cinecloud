@@ -5,12 +5,20 @@ const crypto = require("node:crypto");
 const axios = require("axios");
 const rateLimit = require("express-rate-limit");
 
-const { loadCache, createUser, getUserByUuid, updateUserConfig, updateUserPassword, deleteUser } = require("./lib/db");
+const { loadCache, createUser, getUserByUuid, updateUserConfig, updateUserPassword, deleteUser, purgeOldCachedTorrents } = require("./lib/db");
 const { hashPassword, verifyPassword, encryptConfig, decryptConfig } = require("./lib/crypto");
 const { handleManifest, handleCatalog, handleMeta, handleStream } = require("./lib/stremio");
 const { handleResolve } = require("./lib/resolver");
-const { startProwlarrWorker } = require("./lib/prowlarr-worker");
+const { startProwlarrWorker, stopProwlarrWorker } = require("./lib/prowlarr-worker");
 const { ALL_CATALOGS } = require("./lib/helpers");
+
+function getRequestProtocol(req) {
+    const forwarded = req.headers["x-forwarded-proto"];
+    if (forwarded) {
+        return (Array.isArray(forwarded) ? forwarded[0] : forwarded.split(",")[0]).trim();
+    }
+    return req.protocol || "http";
+}
 
 // En-tête navigateur par défaut pour les requêtes directes (TMDB, Cinemeta, Torrentio)
 axios.defaults.headers.common["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -86,10 +94,14 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
         const configEncrypted = encryptConfig(configData);
         createUser(uuid, passwordHash, configEncrypted);
 
-        const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+        const protocol = getRequestProtocol(req);
         const host = req.get("host");
         const manifestUrl = `${protocol}://${host}/${uuid}/manifest.json`;
         const stremioUrl = `stremio://${host}/${uuid}/manifest.json`;
+
+        // Réveil / redémarrage du worker Prowlarr avec les nouveaux paramètres
+        stopProwlarrWorker();
+        startProwlarrWorker();
 
         console.log(`[User] Nouvel addon créé avec succès : UUID ${uuid}`);
         return res.json({
@@ -118,7 +130,7 @@ app.post("/api/user/login", authLimiter, (req, res) => {
         }
 
         const config = decryptConfig(user.configEncrypted);
-        const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+        const protocol = getRequestProtocol(req);
         const host = req.get("host");
         const manifestUrl = `${protocol}://${host}/${user.uuid}/manifest.json`;
         const stremioUrl = `stremio://${host}/${user.uuid}/manifest.json`;
@@ -168,6 +180,10 @@ app.post("/api/user/update", authLimiter, (req, res) => {
         if (newPassword && typeof newPassword === "string" && newPassword.length >= 4) {
             updateUserPassword(uuid.trim(), hashPassword(newPassword));
         }
+
+        // Réveil / redémarrage du worker Prowlarr avec les paramètres mis à jour
+        stopProwlarrWorker();
+        startProwlarrWorker();
 
         console.log(`[User] Configuration mise à jour pour l'UUID ${uuid}`);
         return res.json({ success: true, message: "Réglages mis à jour avec succès !" });
@@ -251,7 +267,7 @@ app.get("/:uuid/stream/:type/:id.json", async (req, res) => {
     const config = getUserConfig(req.params.uuid);
     if (!config) return res.status(404).json({ error: "Addon introuvable." });
     try {
-        const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+        const protocol = getRequestProtocol(req);
         const baseUrl = `${protocol}://${req.get("host")}`;
         const result = await handleStream(config, req.params.type, req.params.id, cache, baseUrl, req.params.uuid);
         res.json(result);
@@ -316,7 +332,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/me
 app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/stream/:type/:id.json", async (req, res) => {
     const config = parseLegacyConfig(req.params);
     try {
-        const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+        const protocol = getRequestProtocol(req);
         const baseUrl = `${protocol}://${req.get("host")}`;
         const legacyRef = "k_" + Buffer.from(config.apiKey).toString("base64url");
         const result = await handleStream(config, req.params.type, req.params.id, cache, baseUrl, legacyRef);
@@ -440,7 +456,7 @@ function renderHtmlPage(initialTab = "register") {
             margin-bottom: 7px;
             color: #cbd5e1;
         }
-        input[type="text"], input[type="password"] {
+        input[type="text"], input[type="password"], select.form-select {
             width: 100%;
             padding: 13px 15px;
             background: #090d16;
@@ -450,6 +466,10 @@ function renderHtmlPage(initialTab = "register") {
             font-size: 14px;
             outline: none;
             transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        select.form-select option {
+            background: #0f172a;
+            color: var(--text);
         }
         input:focus {
             border-color: var(--accent);
@@ -622,6 +642,19 @@ function renderHtmlPage(initialTab = "register") {
                 <input type="text" id="regProwlarrKey" placeholder="Laissez vide si non utilisé">
             </div>
             <div class="form-group">
+                <label>Mode de Cache Torrent</label>
+                <select id="regCacheMode" class="form-select">
+                    <option value="on" selected>Activé (Prowlarr, Torrentio & Cache local)</option>
+                    <option value="off">Désactivé (Uniquement mes fichiers cloud)</option>
+                </select>
+                <div class="hint">Active le scraping et la disponibilité des torrents instantanés.</div>
+            </div>
+            <div class="form-group">
+                <label>Priorité Linguistique (Ordre des flux)</label>
+                <input type="text" id="regLangPref" value="multi_vff,vff,vfi,multi,vf,vostfr" placeholder="multi_vff,vff,vfi,multi,vf,vostfr">
+                <div class="hint">Ordre de préférence séparé par des virgules (ex: multi_vff,vff,vfi,multi,vf,vostfr)</div>
+            </div>
+            <div class="form-group">
                 <label>Catalogues à activer :</label>
                 <div class="checkbox-grid">
                     ${ALL_CATALOGS.map(c => `
@@ -696,6 +729,18 @@ function renderHtmlPage(initialTab = "register") {
                     <input type="text" id="editProwlarrKey">
                 </div>
                 <div class="form-group">
+                    <label>Mode de Cache Torrent</label>
+                    <select id="editCacheMode" class="form-select">
+                        <option value="on">Activé (Prowlarr, Torrentio & Cache local)</option>
+                        <option value="off">Désactivé (Uniquement mes fichiers cloud)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Priorité Linguistique</label>
+                    <input type="text" id="editLangPref" placeholder="multi_vff,vff,vfi,multi,vf,vostfr">
+                    <div class="hint">Ordre de préférence séparé par des virgules</div>
+                </div>
+                <div class="form-group">
                     <label>Catalogues actifs :</label>
                     <div class="checkbox-grid">
                         ${ALL_CATALOGS.map(c => `
@@ -751,6 +796,8 @@ function renderHtmlPage(initialTab = "register") {
             const apiKey = document.getElementById('regApiKey').value.trim();
             const password = document.getElementById('regPassword').value;
             const tmdbKey = document.getElementById('regTmdbKey').value.trim();
+            const cacheMode = document.getElementById('regCacheMode').value;
+            const langPref = document.getElementById('regLangPref').value.trim();
             const prowlarrUrl = document.getElementById('regProwlarrUrl').value.trim();
             const prowlarrKey = document.getElementById('regProwlarrKey').value.trim();
             const enabledCatalogs = Array.from(document.querySelectorAll('.regCatCheck:checked')).map(c => c.value);
@@ -763,7 +810,7 @@ function renderHtmlPage(initialTab = "register") {
                 const res = await fetch('/api/user/register', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ apiKey, password, tmdbKey, prowlarrUrl, prowlarrKey, enabledCatalogs })
+                    body: JSON.stringify({ apiKey, password, tmdbKey, cacheMode, langPref, prowlarrUrl, prowlarrKey, enabledCatalogs })
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || "Erreur de création");
@@ -804,6 +851,8 @@ function renderHtmlPage(initialTab = "register") {
                 document.getElementById('cfgStremioBtn').href = data.stremioUrl;
 
                 document.getElementById('editTmdbKey').value = data.config.tmdbKey || '';
+                document.getElementById('editCacheMode').value = data.config.cacheMode || 'on';
+                document.getElementById('editLangPref').value = data.config.langPref || 'multi_vff,vff,vfi,multi,vf,vostfr';
                 document.getElementById('editProwlarrUrl').value = data.config.prowlarrUrl || 'http://prowlarr:9696';
                 document.getElementById('editProwlarrKey').value = (data.config.prowlarrKey && data.config.prowlarrKey !== 'off') ? data.config.prowlarrKey : '';
 
@@ -825,6 +874,8 @@ function renderHtmlPage(initialTab = "register") {
             const apiKey = document.getElementById('editApiKey').value.trim();
             const newPassword = document.getElementById('editNewPassword').value;
             const tmdbKey = document.getElementById('editTmdbKey').value.trim();
+            const cacheMode = document.getElementById('editCacheMode').value;
+            const langPref = document.getElementById('editLangPref').value.trim();
             const prowlarrUrl = document.getElementById('editProwlarrUrl').value.trim();
             const prowlarrKey = document.getElementById('editProwlarrKey').value.trim();
             const enabledCatalogs = Array.from(document.querySelectorAll('.editCatCheck:checked')).map(c => c.value);
@@ -839,6 +890,8 @@ function renderHtmlPage(initialTab = "register") {
                         apiKey: apiKey || undefined,
                         newPassword: newPassword || undefined,
                         tmdbKey,
+                        cacheMode,
+                        langPref,
                         prowlarrUrl,
                         prowlarrKey,
                         enabledCatalogs
@@ -889,6 +942,15 @@ app.get("/configure", (req, res) => {
 
 // Démarrage du worker RSS Prowlarr
 startProwlarrWorker();
+
+// Purge périodique du cache de torrents (TTL 30 jours)
+purgeOldCachedTorrents();
+const purgeTimer = setInterval(() => {
+    purgeOldCachedTorrents();
+}, 24 * 60 * 60 * 1000);
+if (purgeTimer && purgeTimer.unref) {
+    purgeTimer.unref();
+}
 
 module.exports = app;
 
