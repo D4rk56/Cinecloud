@@ -109,10 +109,14 @@ test("Crypto - Password hashing and AES-256-GCM encryption", () => {
     assert.deepEqual(decrypted, config, "La configuration déchiffrée doit être strictement identique");
 });
 
-test("Stremio - handleManifest returns valid manifest with CinéCloud FR branding", () => {
-    const manifest = handleManifest({ enabledCatalogs: "my_ad_magnets,my_ad_links" });
+test("Stremio - handleManifest returns valid manifest with CinéCloud FR branding, logo and configure button", () => {
+    const manifest = handleManifest({ enabledCatalogs: "my_ad_magnets,my_ad_links" }, "https://cinecloud.fr", "test-uuid");
     assert.equal(manifest.name, "CinéCloud FR");
     assert.equal(manifest.id, "org.nuvio.alldebrid");
+    assert.equal(manifest.version, "2.2.0");
+    assert.equal(manifest.logo, "https://cinecloud.fr/logo.png");
+    assert.equal(manifest.background, "https://cinecloud.fr/background.png");
+    assert.deepEqual(manifest.behaviorHints, { configurable: true, configurationRequired: false });
     assert.equal(manifest.catalogs.length, 2);
     assert.equal(manifest.catalogs[0].id, "my_ad_links");
     assert.equal(manifest.catalogs[1].id, "my_ad_magnets");
@@ -439,6 +443,91 @@ test("Resolver - unlockFileTarget accepts direct CDN links without erroring on u
     const directCdnUrl = "https://mock.debrid.it/dl/myvideo.mkv?token=123";
     const res = await unlockFileTarget("dummy_api_key", directCdnUrl, "tt1234567");
     assert.equal(res, directCdnUrl, "Doit renvoyer directement le lien CDN si c'est un flux direct valide");
+});
+
+test("AllDebrid - isWarpActive and disableWarpWithFallback protect against ENOTFOUND", () => {
+    const { isWarpActive, disableWarpWithFallback } = require("../lib/alldebrid");
+    assert.equal(typeof isWarpActive(), "boolean");
+    disableWarpWithFallback("ENOTFOUND warp test");
+    assert.equal(isWarpActive(), false, "Warp doit être désactivé après échec");
+});
+
+test("Catalogs - handleCatalog groups series into folder cards instead of individual episodes", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const alldebrid = require("../lib/alldebrid");
+    const originalAdGet = alldebrid.adGet;
+
+    alldebrid.adGet = async (endpoint, apiKey, params) => {
+        if (endpoint === "/v4.1/magnet/status") {
+            return {
+                data: {
+                    status: "success",
+                    data: {
+                        magnets: [
+                            { id: 101, filename: "Breaking.Bad.S01E01.720p.mkv", size: 1000000000 },
+                            { id: 102, filename: "Breaking.Bad.S01E02.720p.mkv", size: 1000000000 },
+                            { id: 103, filename: "Breaking.Bad.S01E03.720p.mkv", size: 1000000000 },
+                            { id: 201, filename: "Better.Call.Saul.S01E01.720p.mkv", size: 1000000000 }
+                        ]
+                    }
+                }
+            };
+        }
+        return originalAdGet(endpoint, apiKey, params);
+    };
+
+    try {
+        const testCache = { series: {}, movies: {} };
+        const result = await handleCatalog({ apiKey: "test" }, "series", "my_ad_magnets_series", testCache);
+        assert.ok(result && Array.isArray(result.metas), "Doit retourner une liste de métas");
+        assert.equal(result.metas.length, 2, "Doit regrouper les 4 épisodes en exactement 2 dossiers séries (Breaking Bad et Better Call Saul)");
+        const bbCard = result.metas.find(m => m.name.toLowerCase().includes("breaking bad"));
+        assert.ok(bbCard, "Le dossier Breaking Bad doit être présent");
+        assert.match(bbCard.description, /Dossier Série • 3 épisode\(s\) disponible\(s\)/);
+        assert.equal(bbCard.type, "series");
+    } finally {
+        alldebrid.adGet = originalAdGet;
+    }
+});
+
+test("Meta - handleMeta returns videos array for series folder (ad_series:)", async () => {
+    const { handleMeta } = require("../lib/stremio");
+    const testCache = {
+        series: {
+            "breaking bad": {
+                groupTitle: "breaking bad",
+                episodes: [
+                    { season: 1, episode: 1, filename: "Breaking.Bad.S01E01.mkv" },
+                    { season: 1, episode: 2, filename: "Breaking.Bad.S01E02.mkv" }
+                ]
+            }
+        }
+    };
+
+    const res = await handleMeta({ apiKey: "test" }, "series", "ad_series:Breaking%20Bad", testCache);
+    assert.ok(res && res.meta, "Doit retourner une fiche meta");
+    assert.equal(res.meta.type, "series");
+    assert.ok(Array.isArray(res.meta.videos), "Doit contenir le tableau videos pour Stremio");
+    assert.equal(res.meta.videos.length, 2);
+    assert.equal(res.meta.videos[0].season, 1);
+    assert.equal(res.meta.videos[0].episode, 1);
+    assert.equal(res.meta.videos[1].season, 1);
+    assert.equal(res.meta.videos[1].episode, 2);
+    assert.equal(res.meta.videos[0].id, "ad_series:Breaking%20Bad:1:1");
+});
+
+test("Server - Logo, Background and Configure routes are defined", () => {
+    const app = require("../index");
+    const routes = [];
+    app._router.stack.forEach(middleware => {
+        if (middleware.route) {
+            routes.push({ path: middleware.route.path, methods: Object.keys(middleware.route.methods) });
+        }
+    });
+
+    assert.ok(routes.some(r => r.path === "/logo.png"), "Route /logo.png doit être définie");
+    assert.ok(routes.some(r => r.path === "/background.png"), "Route /background.png doit être définie");
+    assert.ok(routes.some(r => r.path === "/:uuid/configure"), "Route /:uuid/configure doit être définie");
 });
 
 

@@ -225,7 +225,9 @@ app.get("/resolve/:userRef/:imdbId/:fileRef(*)", handleResolve);
 app.get("/:uuid/manifest.json", (req, res) => {
     const config = getUserConfig(req.params.uuid);
     if (!config) return res.status(404).json({ error: "Addon introuvable pour cet identifiant." });
-    res.json(handleManifest(config));
+    const protocol = getRequestProtocol(req);
+    const baseUrl = `${protocol}://${req.get("host")}`;
+    res.json(handleManifest(config, baseUrl, req.params.uuid));
 });
 
 app.get("/:uuid/catalog/:type/:id.json", async (req, res) => {
@@ -295,7 +297,9 @@ function parseLegacyConfig(params) {
 
 app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/manifest.json", (req, res) => {
     const config = parseLegacyConfig(req.params);
-    res.json(handleManifest(config));
+    const protocol = getRequestProtocol(req);
+    const baseUrl = `${protocol}://${req.get("host")}`;
+    res.json(handleManifest(config, baseUrl));
 });
 
 app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id.json", async (req, res) => {
@@ -346,7 +350,7 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/st
 // 5. INTERFACE WEB OPTIMISÉE • "CinéCloud FR" (/ et /configure)
 // =============================================================================
 
-function renderHtmlPage(initialTab = "register") {
+function renderHtmlPage(initialTab = "register", initialUuid = "") {
     return `<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -687,7 +691,7 @@ function renderHtmlPage(initialTab = "register") {
             <div id="loginStep">
                 <div class="form-group">
                     <label>Votre UUID Addon *</label>
-                    <input type="text" id="cfgUuid" placeholder="Ex: 12345678-1234-...">
+                    <input type="text" id="cfgUuid" value="${initialUuid || ""}" placeholder="Ex: 12345678-1234-...">
                 </div>
                 <div class="form-group">
                     <label>Votre Mot de passe *</label>
@@ -927,10 +931,74 @@ function renderHtmlPage(initialTab = "register") {
                 showAlert(err.message, true);
             }
         }
+
+        if ("${initialUuid || ""}") {
+            window.addEventListener('DOMContentLoaded', () => {
+                const passField = document.getElementById('cfgPassword');
+                if (passField) passField.focus();
+            });
+        }
     </script>
 </body>
 </html>`;
 }
+
+const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#070a13"/>
+      <stop offset="50%" stop-color="#0c1322"/>
+      <stop offset="100%" stop-color="#162238"/>
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bgGrad)"/>
+  <rect x="12" y="12" width="488" height="488" rx="84" fill="none" stroke="url(#cyanGrad)" stroke-width="4" stroke-opacity="0.4"/>
+  <circle cx="256" cy="210" r="130" fill="#0284c7" opacity="0.15" filter="url(#glow)"/>
+  <path d="M374 246c0-42-34-76-76-76-12 0-23 3-33 8-16-29-47-48-83-48-52 0-94 42-94 94 0 6 1 12 2 18-32 9-56 38-56 74 0 42 34 76 76 76h260c38 0 68-30 68-68 0-35-26-64-64-78z" fill="url(#cyanGrad)"/>
+  <polygon points="236,252 236,332 304,292" fill="#090d16"/>
+  <path d="M140 180 L180 140 L210 140 L170 180 Z" fill="#ffffff" opacity="0.3"/>
+  <path d="M220 180 L260 140 L290 140 L250 180 Z" fill="#ffffff" opacity="0.3"/>
+  <text x="256" y="435" text-anchor="middle" fill="#f8fafc" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="44" font-weight="900" letter-spacing="1">CINÉCLOUD</text>
+  <text x="256" y="470" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="700" letter-spacing="3">ALLDEBRID • FR</text>
+</svg>`;
+
+const BACKGROUND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <defs>
+    <radialGradient id="bgRadial" cx="50%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="60%" stop-color="#070a12"/>
+      <stop offset="100%" stop-color="#020408"/>
+    </radialGradient>
+    <linearGradient id="cloudGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#0284c7" stop-opacity="0.01"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bgRadial)"/>
+  <circle cx="960" cy="460" r="450" fill="url(#cloudGlow)"/>
+  <circle cx="400" cy="800" r="300" fill="url(#cloudGlow)"/>
+  <circle cx="1500" cy="300" r="250" fill="url(#cloudGlow)"/>
+</svg>`;
+
+app.get("/logo.png", (req, res) => {
+    res.setHeader("Content-Type", "image/svg+xml");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(LOGO_SVG);
+});
+
+app.get("/background.png", (req, res) => {
+    res.setHeader("Content-Type", "image/svg+xml");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(BACKGROUND_SVG);
+});
 
 app.get("/", (req, res) => {
     res.send(renderHtmlPage("register"));
@@ -938,6 +1006,21 @@ app.get("/", (req, res) => {
 
 app.get("/configure", (req, res) => {
     res.send(renderHtmlPage("configure"));
+});
+
+app.get("/:uuid/configure", (req, res) => {
+    res.send(renderHtmlPage("configure", req.params.uuid));
+});
+
+app.get("/:uuid", (req, res, next) => {
+    if (req.params.uuid && req.params.uuid.length === 36 && req.params.uuid.includes("-")) {
+        return res.send(renderHtmlPage("configure", req.params.uuid));
+    }
+    next();
+});
+
+app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/configure", (req, res) => {
+    res.redirect("/configure");
 });
 
 // Démarrage du worker RSS Prowlarr
