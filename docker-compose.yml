@@ -38,6 +38,10 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      # Configuration Proxy WARP pour AllDebrid (supporte http://, https://, socks5://, socks5h://)
+      # - Mode HTTP standard (défaut avec caomingjun/warp) : http://warp:1080
+      # - Mode SOCKS5 avec DNS distant (recommandé pour éliminer les fuites/erreurs DNS) : socks5h://warp:1080
+      # - Mode SOCKS5 standard : socks5://warp:1080
       - WARP_PROXY=http://warp:1080
       # Clé secrète de chiffrement AES-256-GCM (auto-générée si omise)
       # - APP_SECRET=changez_ce_secret_pour_la_production

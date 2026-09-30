@@ -530,7 +530,33 @@ test("Server - Logo, Background and Configure routes are defined", () => {
     assert.ok(routes.some(r => r.path === "/:uuid/configure"), "Route /:uuid/configure doit être définie");
 });
 
+test("AllDebrid - createProxyAgent handles socks5, socks5h, http and scheme normalization", () => {
+    const { createProxyAgent } = require("../lib/alldebrid");
+    const { SocksProxyAgent } = require("socks-proxy-agent");
+    const { ProxyAgent } = require("proxy-agent");
 
+    const s5 = createProxyAgent("socks5://127.0.0.1:1080");
+    assert.ok(s5 instanceof SocksProxyAgent, "socks5:// doit instancier SocksProxyAgent");
 
+    const s5h = createProxyAgent("socks5h://warp:1080");
+    assert.ok(s5h instanceof SocksProxyAgent, "socks5h:// doit instancier SocksProxyAgent");
 
+    const http = createProxyAgent("http://warp:1080");
+    assert.ok(http instanceof ProxyAgent, "http:// doit instancier ProxyAgent");
+
+    const norm = createProxyAgent("warp:1080");
+    assert.ok(norm instanceof ProxyAgent, "warp:1080 doit être normalisé en http:// et instancier ProxyAgent");
+
+    assert.equal(createProxyAgent(null), null);
+    assert.equal(createProxyAgent(""), null);
+});
+
+test("AllDebrid - SOCKS and network handshake failures activate direct failover", async () => {
+    const alldebrid = require("../lib/alldebrid");
+    const { disableWarpWithFallback, isWarpActive } = alldebrid;
+
+    // Simulation d'une erreur de handshake SOCKS
+    disableWarpWithFallback("SOCKS5 socket closed unexpectedly");
+    assert.equal(isWarpActive(), false, "Warp doit être désactivé en cas de défaillance SOCKS");
+});
 
