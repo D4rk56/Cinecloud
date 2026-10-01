@@ -1093,5 +1093,123 @@ test("Helpers - formatAioStream supports precache, global and torrentio badges",
     assert.ok(torrentio.title.includes("⚡ Instantané Torrentio • AllDebrid"));
 });
 
+test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async () => {
+    const {
+        checkTorboxKey,
+        getTorboxStreamUrl,
+        TORBOX_API_BASE
+    } = require("../lib/torbox");
+
+    // 1. Validation de clé invalide sans appel réseau
+    const emptyKeyRes = await checkTorboxKey("");
+    assert.equal(emptyKeyRes.valid, false);
+
+    // 2. Génération de permalink CDN redirect=true
+    const streamUrl = await getTorboxStreamUrl(1234, 5, "my_test_torbox_key", true);
+    assert.equal(streamUrl, `${TORBOX_API_BASE}/torrents/requestdl?token=my_test_torbox_key&torrent_id=1234&file_id=5&redirect=true`);
+});
+
+test("Torbox - Helpers formatAioStream formats streams with [TB] badges and Torbox labels", () => {
+    const { formatAioStream } = require("../lib/helpers");
+
+    const precache = formatAioStream({
+        filename: "Dune.Part.Two.2024.1080p.mkv",
+        cacheType: "precache",
+        isInstant: true,
+        debridProvider: "torbox"
+    });
+    assert.ok(precache.name.includes("[TB ⚡ Pré-cache]"), "Badge Torbox pré-cache");
+    assert.ok(precache.title.includes("⚡ Pré-cache RSS • Torbox"));
+
+    const globalCache = formatAioStream({
+        filename: "Breaking.Bad.S01E01.1080p.mkv",
+        cacheType: "global",
+        isInstant: true,
+        debridProvider: "torbox"
+    });
+    assert.ok(globalCache.name.includes("[TB ⚡ Cache Global]"), "Badge Torbox cache global");
+
+    const downloading = formatAioStream({
+        filename: "Gladiator.II.2024.1080p.mkv",
+        isInstant: false,
+        debridProvider: "torbox"
+    });
+    assert.ok(downloading.name.includes("[TB ⏳]"), "Badge Torbox téléchargement");
+    assert.ok(downloading.title.includes("⏳ En téléchargement Torbox"));
+
+    const torrentio = formatAioStream({
+        filename: "Inception.2010.1080p.mkv",
+        cacheType: "torrentio",
+        isInstant: true,
+        debridProvider: "torbox"
+    });
+    assert.ok(torrentio.name.includes("[TB ⚡ Torrentio]"), "Badge Torbox Torrentio");
+    assert.ok(torrentio.title.includes("⚡ Instantané Torrentio • Torbox"));
+});
+
+test("Torbox - checkInstantTorbox parses object and list mock responses", async () => {
+    const { checkInstantTorbox, torboxApi } = require("../lib/torbox");
+    const origGet = torboxApi.get;
+
+    try {
+        const hash1 = "1111111111111111111111111111111111111111";
+        const hash2 = "2222222222222222222222222222222222222222";
+
+        // Mock format object
+        torboxApi.get = async function(url, config) {
+            if (url && url.includes("/torrents/checkcached")) {
+                return {
+                    status: 200,
+                    data: {
+                        success: true,
+                        data: {
+                            [hash1]: { name: "Film 1", size: 1000 },
+                            [hash2]: null
+                        }
+                    }
+                };
+            }
+            return origGet.apply(this, arguments);
+        };
+
+        const resultObj = await checkInstantTorbox([hash1, hash2], "mock_token");
+        assert.equal(resultObj[hash1], true);
+        assert.equal(resultObj[hash2], undefined);
+
+        // Mock format list
+        torboxApi.get = async function(url, config) {
+            if (url && url.includes("/torrents/checkcached")) {
+                return {
+                    status: 200,
+                    data: {
+                        success: true,
+                        data: [
+                            { hash: hash1, name: "Film 1" }
+                        ]
+                    }
+                };
+            }
+            return origGet.apply(this, arguments);
+        };
+
+        const resultList = await checkInstantTorbox([hash1, hash2], "mock_token");
+        assert.equal(resultList[hash1], true);
+        assert.equal(resultList[hash2], undefined);
+    } finally {
+        torboxApi.get = origGet;
+    }
+});
+
+test("Torbox - unlockTorboxFileTarget resolves tb_cloud and handles direct URLs", async () => {
+    const { unlockTorboxFileTarget } = require("../lib/resolver");
+
+    const direct = await unlockTorboxFileTarget("key123", "https://storage.torbox.app/cdn/video.mp4");
+    assert.equal(direct, "https://storage.torbox.app/cdn/video.mp4");
+
+    const cloudRef = await unlockTorboxFileTarget("key123", "tb_cloud:456:78");
+    assert.ok(cloudRef && cloudRef.includes("torrent_id=456") && cloudRef.includes("file_id=78") && cloudRef.includes("token=key123"));
+});
+
+
 
 

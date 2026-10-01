@@ -114,7 +114,6 @@ function getUserConfig(uuid) {
 app.post("/api/user/register", authLimiter, async (req, res) => {
     try {
         const {
-            apiKey,
             password,
             pseudo,
             tmdbKey,
@@ -133,9 +132,20 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             enabledCatalogs
         } = req.body;
 
-        if (!apiKey || typeof apiKey !== "string" || apiKey.trim() === "") {
-            return res.status(400).json({ error: "La clé API AllDebrid est requise." });
+        const debridProvider = (req.body.debridProvider === "torbox") ? "torbox" : "alldebrid";
+        const apiKey = req.body.apiKey ? req.body.apiKey.trim() : "";
+        const torboxApiKey = req.body.torboxApiKey ? req.body.torboxApiKey.trim() : (debridProvider === "torbox" ? apiKey : "");
+
+        if (debridProvider === "torbox") {
+            if (!torboxApiKey) {
+                return res.status(400).json({ error: "La clé API Torbox est requise." });
+            }
+        } else {
+            if (!apiKey) {
+                return res.status(400).json({ error: "La clé API AllDebrid est requise." });
+            }
         }
+
         if (!password || typeof password !== "string" || password.length < 4) {
             return res.status(400).json({ error: "Un mot de passe d'au moins 4 caractères est requis pour sécuriser vos réglages." });
         }
@@ -147,7 +157,9 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             : ((prowlarrKey && prowlarrKey.trim() && prowlarrKey !== "off") ? "shared" : "local");
 
         const configData = {
-            apiKey: apiKey.trim(),
+            debridProvider,
+            apiKey: apiKey || "",
+            torboxApiKey: torboxApiKey || "",
             pseudo: (pseudo && pseudo.trim()) || "",
             tmdbKey: (tmdbKey && tmdbKey.trim()) || "default",
             cacheMode: cacheMode === "off" ? "off" : "on",
@@ -179,7 +191,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
         startProwlarrWorker();
 
         return runWithUser({ uuid, pseudo: configData.pseudo || "Utilisateur" }, () => {
-            console.log(`[User] Nouveau manifest créé avec succès : UUID ${uuid}${configData.pseudo ? ` (${configData.pseudo})` : ""} [Prowlarr: ${configData.prowlarrMode}]`);
+            console.log(`[User] Nouveau manifest créé avec succès : UUID ${uuid}${configData.pseudo ? ` (${configData.pseudo})` : ""} [Provider: ${configData.debridProvider}, Prowlarr: ${configData.prowlarrMode}]`);
             return res.json({
                 success: true,
                 uuid,
@@ -219,6 +231,9 @@ app.post("/api/user/login", authLimiter, (req, res) => {
             stremioUrl,
             config: {
                 ...config,
+                debridProvider: config.debridProvider || "alldebrid",
+                torboxApiKey: config.torboxApiKey || "",
+                torboxApiKeyPreview: config.torboxApiKey ? `${config.torboxApiKey.slice(0, 4)}...${config.torboxApiKey.slice(-4)}` : "",
                 pseudo: user.pseudo || config.pseudo || "",
                 prowlarrUrl: config.prowlarrUrl || "http://prowlarr:9696",
                 prowlarrKey: config.prowlarrKey || "",
@@ -242,7 +257,9 @@ app.post("/api/user/update", authLimiter, (req, res) => {
             uuid,
             password,
             pseudo,
+            debridProvider,
             apiKey,
+            torboxApiKey,
             newPassword,
             tmdbKey,
             cacheMode,
@@ -274,8 +291,14 @@ app.post("/api/user/update", authLimiter, (req, res) => {
             ? prowlarrMode
             : (currentConfig.prowlarrMode || user.prowlarrMode || "local");
 
+        const resolvedDebridProvider = debridProvider !== undefined
+            ? (debridProvider === "torbox" ? "torbox" : "alldebrid")
+            : (currentConfig.debridProvider || "alldebrid");
+
         const updatedConfig = {
-            apiKey: (apiKey && apiKey.trim()) || currentConfig.apiKey,
+            debridProvider: resolvedDebridProvider,
+            apiKey: apiKey !== undefined ? (apiKey ? apiKey.trim() : "") : (currentConfig.apiKey || ""),
+            torboxApiKey: torboxApiKey !== undefined ? (torboxApiKey ? torboxApiKey.trim() : "") : (currentConfig.torboxApiKey || ""),
             pseudo: pseudo !== undefined ? pseudo.trim() : (user.pseudo || currentConfig.pseudo || ""),
             tmdbKey: tmdbKey !== undefined ? tmdbKey.trim() : currentConfig.tmdbKey,
             cacheMode: cacheMode === "off" ? "off" : (cacheMode === "on" ? "on" : currentConfig.cacheMode || "on"),
@@ -305,7 +328,7 @@ app.post("/api/user/update", authLimiter, (req, res) => {
         startProwlarrWorker();
 
         return runWithUser({ uuid: user.uuid, pseudo: updatedConfig.pseudo || "Utilisateur" }, () => {
-            console.log(`[User] Configuration mise à jour pour l'UUID ${uuid} [Prowlarr: ${updatedConfig.prowlarrMode}]`);
+            console.log(`[User] Configuration mise à jour pour l'UUID ${uuid} [Provider: ${updatedConfig.debridProvider}, Prowlarr: ${updatedConfig.prowlarrMode}]`);
             return res.json({ success: true, message: "Réglages mis à jour avec succès !" });
         });
     } catch (err) {
@@ -352,6 +375,13 @@ app.get("/api/status/warp", (req, res) => {
 app.post("/api/check/alldebrid", async (req, res) => {
     const { apiKey } = req.body;
     const result = await checkAllDebridKey(apiKey);
+    res.json(result);
+});
+
+app.post("/api/check/torbox", async (req, res) => {
+    const { apiKey } = req.body;
+    const { checkTorboxKey } = require("./lib/torbox");
+    const result = await checkTorboxKey(apiKey);
     res.json(result);
 });
 
