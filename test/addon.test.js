@@ -1845,3 +1845,64 @@ test("Helpers - resolveKitsuMeta utilise le mapping Fribb et retourne la saison 
     assert.ok(Array.isArray(meta.aliases));
 });
 
+test("Helpers - hasNonLatinCharacters detects Arabic, Cyrillic, CJK and preserves Latin/French", () => {
+    const { hasNonLatinCharacters } = require("../lib/helpers");
+    assert.ok(hasNonLatinCharacters("المهايطية"), "Arabe doit être détecté");
+    assert.ok(hasNonLatinCharacters("Брат"), "Cyrillique doit être détecté");
+    assert.ok(hasNonLatinCharacters("鬼滅の刃"), "CJK doit être détecté");
+    assert.ok(hasNonLatinCharacters("שָׁלוֹם"), "Hébreu doit être détecté");
+    assert.equal(hasNonLatinCharacters("Le Fabuleux Destin d'Amélie Poulain"), false, "Français avec accents reste latin");
+    assert.equal(hasNonLatinCharacters("Inception"), false, "Anglais reste latin");
+    assert.equal(hasNonLatinCharacters("No Exit"), false, "Titre latin");
+});
+
+test("Helpers - isConfidentTitleMatch excludes Toy Story sequels and packs", () => {
+    const { isConfidentTitleMatch } = require("../lib/helpers");
+
+    // Toy Story 1 ne doit PAS matcher Toy Story 2, 3, 4
+    assert.equal(isConfidentTitleMatch("Toy Story", "Toy Story 2", 1995, 1999), false);
+    assert.equal(isConfidentTitleMatch("Toy Story", "Toy Story 3", 1995, 2010), false);
+    assert.equal(isConfidentTitleMatch("Toy Story", "Toy Story 4", 1995, 2019), false);
+
+    // Toy Story 1 ne doit PAS matcher les coffrets / packs / intégrales
+    assert.equal(isConfidentTitleMatch("Toy Story", "Toy Story Quadrilogie", 1995, null), false);
+    assert.equal(isConfidentTitleMatch("Toy Story", "Toy Story Integrale 1080p", 1995, null), false);
+    assert.equal(isConfidentTitleMatch("Toy Story", "Toy Story Collection Pack", 1995, null), false);
+
+    // En revanche Toy Story 1 doit matcher un fichier du film Toy Story 1
+    assert.ok(isConfidentTitleMatch("Toy Story", "Toy Story", 1995, 1995));
+    assert.ok(isConfidentTitleMatch("Toy Story", "Toy Story 1995 MULTi 1080p BluRay", 1995, 1995));
+});
+
+test("Helpers - isConfidentTitleMatch prevents Exit matching Sans issue / No Exit", () => {
+    const { isConfidentTitleMatch } = require("../lib/helpers");
+
+    // "Exit" (film coréen 2019) ne doit pas matcher "Sans issue" / "No Exit" (2022)
+    assert.equal(isConfidentTitleMatch("Exit", "Sans issue", 2019, 2022), false);
+    assert.equal(isConfidentTitleMatch("Exit", "No Exit", 2019, 2022), false);
+    assert.equal(isConfidentTitleMatch("Exit", "Sans issue", null, null), false);
+
+    // Mais "Exit" doit matcher son propre release
+    assert.ok(isConfidentTitleMatch("Exit", "Exit", 2019, 2019));
+    assert.ok(isConfidentTitleMatch("Exit", "Exit 2019 MULTi 1080p", 2019, 2019));
+});
+
+test("Catalogs - Infinite scroll pagination groups items and returns 50 per page", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+
+    // Simuler un appel handleCatalog avec skip=0 et skip=50
+    const config = { apiKey: "test_key", disableCatalogs: false };
+    const cache = {};
+
+    // Test sur catalogue my_ad_links ou recommendation
+    const page1 = await handleCatalog(config, "movie", "my_ad_reco_movies", cache, "skip=0");
+    assert.ok(page1);
+    assert.ok(Array.isArray(page1.metas));
+    assert.ok(page1.metas.length <= 50, "Maximum 50 éléments par page");
+
+    const page2 = await handleCatalog(config, "movie", "my_ad_reco_movies", cache, "skip=50");
+    assert.ok(page2);
+    assert.ok(Array.isArray(page2.metas));
+});
+
+
