@@ -2,6 +2,7 @@
 
 const express = require("express");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
 const axios = require("axios");
 const rateLimit = require("express-rate-limit");
 
@@ -297,8 +298,8 @@ app.post("/api/user/update", authLimiter, (req, res) => {
 
         const updatedConfig = {
             debridProvider: resolvedDebridProvider,
-            apiKey: apiKey !== undefined ? (apiKey ? apiKey.trim() : "") : (currentConfig.apiKey || ""),
-            torboxApiKey: torboxApiKey !== undefined ? (torboxApiKey ? torboxApiKey.trim() : "") : (currentConfig.torboxApiKey || ""),
+            apiKey: (apiKey && typeof apiKey === "string" && apiKey.trim()) ? apiKey.trim() : (currentConfig.apiKey || ""),
+            torboxApiKey: (torboxApiKey && typeof torboxApiKey === "string" && torboxApiKey.trim()) ? torboxApiKey.trim() : (currentConfig.torboxApiKey || ""),
             pseudo: pseudo !== undefined ? pseudo.trim() : (user.pseudo || currentConfig.pseudo || ""),
             tmdbKey: tmdbKey !== undefined ? tmdbKey.trim() : currentConfig.tmdbKey,
             cacheMode: cacheMode === "off" ? "off" : (cacheMode === "on" ? "on" : currentConfig.cacheMode || "on"),
@@ -309,7 +310,7 @@ app.post("/api/user/update", authLimiter, (req, res) => {
             maxSizeGb: maxSizeGb !== undefined ? (Number(maxSizeGb) || 0) : (currentConfig.maxSizeGb !== undefined ? currentConfig.maxSizeGb : 150),
             maxStreams: maxStreams !== undefined ? (Number(maxStreams) || 0) : (currentConfig.maxStreams || 0),
             prowlarrUrl: (prowlarrUrl && prowlarrUrl.trim()) || currentConfig.prowlarrUrl || "http://prowlarr:9696",
-            prowlarrKey: prowlarrKey !== undefined ? prowlarrKey.trim() : currentConfig.prowlarrKey,
+            prowlarrKey: (prowlarrKey && typeof prowlarrKey === "string" && prowlarrKey.trim()) ? prowlarrKey.trim() : (currentConfig.prowlarrKey || "off"),
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: allowDownload !== undefined ? Boolean(allowDownload) : Boolean(currentConfig.allowDownload),
             disableCatalogs: disableCatalogs !== undefined ? Boolean(disableCatalogs) : Boolean(currentConfig.disableCatalogs),
@@ -401,12 +402,26 @@ app.get("/api/stats", (req, res) => {
 
 app.post("/api/admin/login", authLimiter, (req, res) => {
     const { password } = req.body;
-    if (password && password === ADMIN_PASSWORD) {
+    let isValid = false;
+    if (typeof password === "string" && typeof ADMIN_PASSWORD === "string") {
+        const passBuf = Buffer.from(password);
+        const adminBuf = Buffer.from(ADMIN_PASSWORD);
+        if (passBuf.length === adminBuf.length) {
+            isValid = crypto.timingSafeEqual(passBuf, adminBuf);
+        }
+    }
+    if (isValid) {
         const token = crypto.randomBytes(24).toString("hex");
         activeAdminTokens.add(token);
         return res.json({ success: true, token });
     }
     return res.status(401).json({ error: "Mot de passe administrateur incorrect." });
+});
+
+app.post("/api/admin/logout", requireAdmin, (req, res) => {
+    const token = req.headers["x-admin-token"];
+    if (token) activeAdminTokens.delete(token);
+    res.json({ success: true });
 });
 
 app.get("/api/admin/stats", requireAdmin, (req, res) => {
@@ -428,7 +443,11 @@ app.get("/api/admin/users", requireAdmin, (req, res) => {
 });
 
 app.delete("/api/admin/users/:uuid", requireAdmin, (req, res) => {
-    adminDeleteUser(req.params.uuid);
+    const uuid = req.params.uuid;
+    if (!uuid || !/^[a-f0-9\-]{36}$/i.test(uuid)) {
+        return res.status(400).json({ error: "Format UUID invalide." });
+    }
+    adminDeleteUser(uuid);
     res.json({ success: true });
 });
 
@@ -464,6 +483,96 @@ app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
         cleared += clearSearchQueries();
     }
     res.json({ success: true, cleared });
+});
+
+// Sonde / Test de santé en direct des APIs AllDebrid et Torbox
+app.get("/api/admin/health/debrid", requireAdmin, async (req, res) => {
+    const results = {
+        timestamp: new Date().toISOString(),
+        alldebrid: { status: "unknown", latencyMs: 0, error: null },
+        torbox: { status: "unknown", latencyMs: 0, error: null }
+    };
+
+    // 1 & 2. Sondes concurrentes AllDebrid & Torbox
+    const probeAd = (async () => {
+        const adStart = Date.now();
+        try {
+            const adRes = await axios.get("https://api.alldebrid.com/v4/user", {
+                timeout: 7000,
+                headers: { "User-Agent": "CineCloud-FR-HealthProbe/1.0" },
+                validateStatus: () => true
+            });
+            results.alldebrid.latencyMs = Date.now() - adStart;
+            results.alldebrid.status = [200, 401, 403].includes(adRes.status) ? "online" : "degraded";
+            results.alldebrid.httpCode = adRes.status;
+        } catch (err) {
+            results.alldebrid.latencyMs = Date.now() - adStart;
+            results.alldebrid.status = "offline";
+            results.alldebrid.error = err.message;
+        }
+    })();
+
+    const probeTb = (async () => {
+        const tbStart = Date.now();
+        try {
+            const tbRes = await axios.get("https://api.torbox.app/v1/api/user/me", {
+                timeout: 7000,
+                headers: { "User-Agent": "CineCloud-FR-HealthProbe/1.0" },
+                validateStatus: () => true
+            });
+            results.torbox.latencyMs = Date.now() - tbStart;
+            results.torbox.status = [200, 401, 403].includes(tbRes.status) ? "online" : "degraded";
+            results.torbox.httpCode = tbRes.status;
+        } catch (err) {
+            results.torbox.latencyMs = Date.now() - tbStart;
+            results.torbox.status = "offline";
+            results.torbox.error = err.message;
+        }
+    })();
+
+    await Promise.all([probeAd, probeTb]);
+
+    res.json(results);
+});
+
+// Téléchargement sécurisé du backup SQLite
+app.get("/api/admin/backup", requireAdmin, (req, res) => {
+    const { SQLITE_FILE, checkpointDatabase } = require("./lib/db");
+    if (!SQLITE_FILE || !fs.existsSync(SQLITE_FILE)) {
+        return res.status(404).json({ error: "Fichier de base de données SQLite introuvable." });
+    }
+    checkpointDatabase();
+    const dateStr = new Date().toISOString().slice(0, 10);
+    res.download(SQLITE_FILE, `cinecloud-nuvio-backup-${dateStr}.db`, (err) => {
+        if (err && !res.headersSent) {
+            res.status(500).json({ error: "Erreur lors du téléchargement du backup." });
+        }
+    });
+});
+
+// Purge des torrents expirés (+30 jours)
+app.post("/api/admin/maintenance/purge-expired", requireAdmin, (req, res) => {
+    const { purgeOldCachedTorrents } = require("./lib/db");
+    const purged = purgeOldCachedTorrents(30 * 86400);
+    res.json({ success: true, purged, message: `${purged} torrents expirés (+30j) supprimés du cache.` });
+});
+
+// Optimisation SQLite (WAL checkpoint & VACUUM)
+app.post("/api/admin/maintenance/vacuum", requireAdmin, (req, res) => {
+    const { optimizeDatabase } = require("./lib/db");
+    const result = optimizeDatabase();
+    if (result.success) {
+        res.json({ success: true, message: "Base de données SQLite optimisée avec succès (WAL checkpoint & VACUUM)." });
+    } else {
+        res.status(500).json({ error: result.error || "Erreur lors de l'optimisation SQLite." });
+    }
+});
+
+// Déclenchement forcé immédiat du cycle RSS Prowlarr crowdsourcing
+app.post(["/api/admin/prowlarr/sync", "/api/admin/maintenance/sync-prowlarr"], requireAdmin, async (req, res) => {
+    const { forceSyncProwlarrCrowdsourcing } = require("./lib/prowlarr-worker");
+    const result = await forceSyncProwlarrCrowdsourcing();
+    res.json(result);
 });
 
 // =============================================================================

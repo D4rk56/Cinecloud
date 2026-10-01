@@ -1288,6 +1288,257 @@ test("Lumio - handleStream queries Lumio on-demand and filters out error cards",
     }
 });
 
+test("Helpers - formatAioStream source and status lines structure", () => {
+    const { formatAioStream } = require("../lib/helpers");
 
+    // 1. Source Prowlarr
+    const prowlarrStream = formatAioStream({
+        filename: "Dune.Part.Two.2024.1080p.mkv",
+        indexer: "Prowlarr | YggTorrent",
+        isInstant: true,
+        debridProvider: "alldebrid"
+    });
+    assert.ok(prowlarrStream.name.startsWith("[AD ⚡]"), "Colonne de gauche épurée avec badge");
+    assert.ok(prowlarrStream.name.includes("1080p"), "Colonne de gauche inclut la résolution");
+    assert.ok(!prowlarrStream.name.includes("CinéCloud"), "Ne doit plus inclure de nom de provider superflu à gauche");
+    assert.ok(prowlarrStream.title.includes("🔍 Prowlarr (YggTorrent)"), "Ligne de source Prowlarr");
+    assert.ok(prowlarrStream.title.includes("⚡ Instantané AllDebrid"), "Ligne de statut instantané AD");
 
+    // 2. Source Lumio avec sous-source
+    const lumioStream = formatAioStream({
+        filename: "Dune.Part.Two.2024.2160p.mkv",
+        cacheType: "lumio",
+        indexer: "Lumio | Sharewood",
+        isInstant: true,
+        debridProvider: "torbox"
+    });
+    assert.ok(lumioStream.name.startsWith("[TB ⚡ Lumio]"), "Badge Torbox Lumio");
+    assert.ok(lumioStream.title.includes("🌐 Lumio (Sharewood)"), "Ligne de source Lumio détaillée");
+    assert.ok(lumioStream.title.includes("⚡ Instantané Lumio • Torbox"), "Ligne de statut Lumio Torbox");
 
+    // 3. Source Mon Cloud personnel
+    const cloudStream = formatAioStream({
+        filename: "MonFilm.2024.1080p.mkv",
+        indexer: "Mon Cloud",
+        isInstant: true
+    });
+    assert.ok(cloudStream.title.includes("☁️ Cloud personnel"), "Ligne de source Cloud personnel");
+    assert.ok(cloudStream.title.includes("⚡ Cloud personnel"), "Ligne de statut Cloud personnel");
+    assert.ok(!cloudStream.title.includes("Mon Cloud"), "Ne doit pas contenir le texte brut 'Mon Cloud'");
+
+    // 4. Flux en cours de téléchargement (non instantané)
+    const dlAdStream = formatAioStream({
+        filename: "Gladiator.2000.1080p.mkv",
+        isInstant: false,
+        debridProvider: "alldebrid"
+    });
+    assert.ok(dlAdStream.name.includes("[AD ⏳]"));
+    assert.ok(dlAdStream.title.includes("⏳ En téléchargement AllDebrid"));
+
+    const dlTbStream = formatAioStream({
+        filename: "Gladiator.2000.1080p.mkv",
+        isInstant: false,
+        debridProvider: "torbox"
+    });
+    assert.ok(dlTbStream.name.includes("[TB ⏳]"));
+    assert.ok(dlTbStream.title.includes("⏳ En téléchargement Torbox"));
+});
+
+test("UI - Stepper naming, hidden login error, TMDB guidance, and Lumio links", () => {
+    const { renderConfigPage, renderAdminPage } = require("../lib/ui");
+
+    const htmlConfig = renderConfigPage("register");
+    // #cfgLoginError doit avoir style="display: none;"
+    assert.ok(htmlConfig.includes('id="cfgLoginError"'), "Doit contenir le conteneur d'erreur login");
+    assert.ok(htmlConfig.includes('display: none'), "L'erreur de login doit être masquée par défaut");
+
+    // Stepper étape 4 doit s'appeler "Qualité & Cache"
+    assert.ok(htmlConfig.includes("Qualité & Cache"), "L'étape 4 du stepper doit être nommée 'Qualité & Cache'");
+
+    // TMDB indication optionnelle et lien Cinemeta
+    assert.ok(htmlConfig.includes("Cinemeta"), "Doit mentionner Cinemeta comme fallback");
+    assert.ok(htmlConfig.includes("Optionnelle") || htmlConfig.includes("optionnel"), "Doit indiquer que TMDB est optionnel");
+
+    // Lien cliquable vers https://mylumio.tv
+    assert.ok(htmlConfig.includes('href="https://mylumio.tv"'), "Doit inclure un lien cliquable vers mylumio.tv");
+
+    // Prowlarr libellé externe ou interne
+    assert.ok(htmlConfig.includes("Optionnel - Instance externe ou interne"), "Doit afficher le libellé Prowlarr explicite");
+
+    // Admin UI
+    const htmlAdmin = renderAdminPage();
+    assert.ok(htmlAdmin.includes("escapeHtml"), "L'interface Admin doit définir la fonction escapeHtml");
+    assert.ok(htmlAdmin.includes("/api/admin/health/debrid"), "L'interface Admin doit avoir la sonde de santé");
+    assert.ok(htmlAdmin.includes("/api/admin/backup"), "L'interface Admin doit inclure le téléchargement de backup");
+    assert.ok(htmlAdmin.includes("/api/admin/maintenance/vacuum"), "L'interface Admin doit inclure le vacuum");
+    assert.ok(htmlAdmin.includes("/api/admin/maintenance/purge-expired"), "L'interface Admin doit inclure la purge expirée");
+    assert.ok(htmlAdmin.includes("/api/admin/logout"), "L'interface Admin doit supporter la déconnexion");
+});
+
+test("User API - Update retains existing API keys when inputs are left empty", async () => {
+    const app = require("../index");
+    const axios = require("axios");
+
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+        // 1. Enregistrement d'un utilisateur avec clés valides
+        const regRes = await axios.post(`${base}/api/user/register`, {
+            password: "updatePassword123",
+            pseudo: "TestKeyRetention",
+            apiKey: "original_alldebrid_key_abc123",
+            torboxApiKey: "original_torbox_key_xyz789",
+            prowlarrKey: "original_prowlarr_key_456"
+        });
+        assert.equal(regRes.status, 200);
+        const uuid = regRes.data.uuid;
+
+        // 2. Mise à jour avec champs de clé vides (comme envoyé par le formulaire quand l'utilisateur ne les modifie pas)
+        const updateRes = await axios.post(`${base}/api/user/update`, {
+            uuid,
+            password: "updatePassword123",
+            pseudo: "TestKeyRetentionUpdated",
+            apiKey: "",
+            torboxApiKey: "",
+            prowlarrKey: "",
+            resolutions: "1080p"
+        });
+        assert.equal(updateRes.status, 200);
+        assert.equal(updateRes.data.success, true);
+
+        // 3. Vérification de la persistance des clés enregistrées
+        const loginRes = await axios.post(`${base}/api/user/login`, {
+            uuid,
+            password: "updatePassword123"
+        });
+        assert.equal(loginRes.status, 200);
+        assert.equal(loginRes.data.config.apiKey, "original_alldebrid_key_abc123", "La clé AllDebrid ne doit pas être écrasée par une chaîne vide");
+        assert.equal(loginRes.data.config.torboxApiKey, "original_torbox_key_xyz789", "La clé Torbox ne doit pas être écrasée par une chaîne vide");
+        assert.equal(loginRes.data.config.prowlarrKey, "original_prowlarr_key_456", "La clé Prowlarr ne doit pas être écrasée par une chaîne vide");
+        assert.equal(loginRes.data.config.resolutions, "1080p", "Les réglages modifiés doivent bien être mis à jour");
+
+        // 4. Nettoyage
+        await axios.post(`${base}/api/user/delete`, {
+            uuid,
+            password: "updatePassword123"
+        });
+    } finally {
+        server.close();
+    }
+});
+
+test("Admin API - Security, Maintenance, Backup, and Health Probe endpoints", async () => {
+    const app = require("../index");
+    const axios = require("axios");
+
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+        const correctPassword = process.env.ADMIN_PASSWORD || "admin123";
+
+        // 1. Rejet mot de passe vide ou incorrect
+        try {
+            await axios.post(`${base}/api/admin/login`, { password: "" });
+            assert.fail("Doit rejeter un mot de passe vide");
+        } catch (err) {
+            assert.equal(err.response?.status, 401);
+        }
+
+        try {
+            await axios.post(`${base}/api/admin/login`, { password: "mauvaise_longueur_trop_long" });
+            assert.fail("Doit rejeter un mauvais mot de passe");
+        } catch (err) {
+            assert.equal(err.response?.status, 401);
+        }
+
+        // 2. Connexion réussie et génération de token
+        const loginRes = await axios.post(`${base}/api/admin/login`, { password: correctPassword });
+        assert.equal(loginRes.status, 200);
+        assert.ok(loginRes.data.token, "Un token d'administration doit être retourné");
+        const token = loginRes.data.token;
+
+        // 3. Maintenance - Purge expired
+        // 3a. Sans token -> 401
+        try {
+            await axios.post(`${base}/api/admin/maintenance/purge-expired`);
+            assert.fail("Doit rejeter sans token");
+        } catch (err) {
+            assert.equal(err.response?.status, 401);
+        }
+        // 3b. Avec token -> 200
+        const purgeRes = await axios.post(`${base}/api/admin/maintenance/purge-expired`, {}, {
+            headers: { "x-admin-token": token }
+        });
+        assert.equal(purgeRes.status, 200);
+        assert.equal(purgeRes.data.success, true);
+        assert.ok(typeof purgeRes.data.purged === "number");
+
+        // 4. Maintenance - Vacuum / optimize
+        const vacuumRes = await axios.post(`${base}/api/admin/maintenance/vacuum`, {}, {
+            headers: { "x-admin-token": token }
+        });
+        assert.equal(vacuumRes.status, 200);
+        assert.equal(vacuumRes.data.success, true);
+
+        // 5. Maintenance - Prowlarr sync
+        const syncRes = await axios.post(`${base}/api/admin/prowlarr/sync`, {}, {
+            headers: { "x-admin-token": token }
+        });
+        assert.equal(syncRes.status, 200);
+        assert.equal(typeof syncRes.data.success, "boolean");
+
+        // 6. Sonde santé Debrid (/api/admin/health/debrid)
+        const healthRes = await axios.get(`${base}/api/admin/health/debrid`, {
+            headers: { "x-admin-token": token }
+        });
+        assert.equal(healthRes.status, 200);
+        assert.ok(healthRes.data.alldebrid);
+        assert.ok(healthRes.data.torbox);
+        assert.ok(["online", "degraded", "offline"].includes(healthRes.data.alldebrid.status));
+        assert.ok(["online", "degraded", "offline"].includes(healthRes.data.torbox.status));
+
+        // 7. Backup SQLite (/api/admin/backup)
+        const backupRes = await axios.get(`${base}/api/admin/backup`, {
+            headers: { "x-admin-token": token },
+            responseType: "arraybuffer"
+        });
+        assert.equal(backupRes.status, 200);
+        const backupBuffer = Buffer.from(backupRes.data);
+        assert.ok(backupBuffer.length > 0, "Le fichier de backup ne doit pas être vide");
+        const headerStr = backupBuffer.subarray(0, 16).toString("utf8");
+        assert.ok(headerStr.startsWith("SQLite format 3"), "Le backup doit être une base SQLite valide");
+
+        // 8. Validation format UUID sur suppression utilisateur
+        try {
+            await axios.delete(`${base}/api/admin/users/bad-uuid-format`, {
+                headers: { "x-admin-token": token }
+            });
+            assert.fail("Doit rejeter un format UUID invalide avec 400");
+        } catch (err) {
+            assert.equal(err.response?.status, 400);
+        }
+
+        // 9. Révocation de token via logout
+        const logoutRes = await axios.post(`${base}/api/admin/logout`, {}, {
+            headers: { "x-admin-token": token }
+        });
+        assert.equal(logoutRes.status, 200);
+        assert.equal(logoutRes.data.success, true);
+
+        // Vérification que le token révoqué ne permet plus d'accéder aux routes admin
+        try {
+            await axios.get(`${base}/api/admin/stats`, {
+                headers: { "x-admin-token": token }
+            });
+            assert.fail("Le token révoqué doit être refusé avec 401");
+        } catch (err) {
+            assert.equal(err.response?.status, 401);
+        }
+    } finally {
+        server.close();
+    }
+});
