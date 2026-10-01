@@ -1377,11 +1377,13 @@ test("Helpers - formatAioStream source and status lines structure", () => {
     const cloudStream = formatAioStream({
         filename: "MonFilm.2024.1080p.mkv",
         indexer: "Mon Cloud",
-        isInstant: true
+        isInstant: true,
+        debridProvider: "alldebrid"
     });
+    assert.ok(cloudStream.name.startsWith("[AD ⚡ Cloud]"), "Badge gauche Cloud");
     assert.ok(cloudStream.title.includes("☁️ Cloud personnel"), "Ligne de source Cloud personnel");
-    assert.ok(cloudStream.title.includes("⚡ Cloud personnel"), "Ligne de statut Cloud personnel");
-    assert.ok(!cloudStream.title.includes("Mon Cloud"), "Ne doit pas contenir le texte brut 'Mon Cloud'");
+    assert.ok(cloudStream.title.includes("⚡ Lecture immédiate"), "Ligne de statut Lecture immédiate");
+    assert.ok(!cloudStream.title.includes("Cloud personnel\n⚡ Cloud personnel"), "Ne doit pas doubler Cloud personnel");
 
     // 4. Flux en cours de téléchargement (non instantané)
     const dlAdStream = formatAioStream({
@@ -2083,6 +2085,52 @@ test("User API - Register and update accepts debridProvider 'both'", async () =>
         server.close();
     }
 });
+
+test("Helpers & Cloud - formatAioStream handles Exit 8 WEB release with proper quality, MULTi flag, and no duplicates", () => {
+    const { formatAioStream } = require("../lib/helpers");
+
+    const formatted = formatAioStream({
+        filename: "Exit.8.2025.MULTi.1080p.WEB.x264-SORTIEHUIT.mkv",
+        sizeBytes: 2500000000,
+        provider: "Mon Cloud",
+        indexer: "AllDebrid Cloud",
+        isInstant: true,
+        cacheType: "cloud",
+        debridProvider: "alldebrid"
+    });
+
+    // 1. Badge gauche
+    assert.ok(formatted.name.includes("[AD ⚡ Cloud]"), "Badge [AD ⚡ Cloud] attendu");
+    assert.ok(formatted.name.includes("1080p ⭐"), "Résolution 1080p ⭐ attendue");
+
+    // 2. Qualité WEB-DL et Codec AVC
+    assert.ok(formatted.title.includes("🎬 WEB-DL • AVC"), "Doit détecter WEB-DL et AVC");
+
+    // 3. Taille et Audio
+    assert.ok(formatted.title.includes("📦 2.3 GB"), "Doit afficher la taille du fichier");
+
+    // 4. Langues et Release Group
+    assert.ok(formatted.title.includes("🇫🇷 / 🌐"), "Doit afficher 🇫🇷 / 🌐 pour MULTi");
+    assert.ok(formatted.title.includes("🏷️ SORTIEHUIT"), "Doit détecter le groupe SORTIEHUIT");
+
+    // 5. Source et Statut sans doublon
+    assert.ok(formatted.title.includes("☁️ Cloud personnel"), "Ligne de provenance Cloud personnel");
+    assert.ok(formatted.title.includes("⚡ Lecture immédiate"), "Ligne de statut Lecture immédiate");
+    assert.equal(formatted.title.includes("Cloud personnel\n⚡ Cloud personnel"), false, "Aucun doublon 'Cloud personnel'");
+
+    // 6. Test avec Torbox
+    const formattedTb = formatAioStream({
+        filename: "Exit.8.2025.MULTi.1080p.WEB.x264-SORTIEHUIT.mkv",
+        provider: "Mon Cloud",
+        indexer: "Torbox Cloud",
+        isInstant: true,
+        debridProvider: "torbox"
+    });
+    assert.ok(formattedTb.name.includes("[TB ⚡ Cloud]"), "Badge [TB ⚡ Cloud] attendu pour Torbox");
+    assert.ok(formattedTb.title.includes("☁️ Cloud personnel"), "Source Cloud personnel");
+    assert.ok(formattedTb.title.includes("⚡ Lecture immédiate"), "Statut Torbox");
+});
+
 
 
 
