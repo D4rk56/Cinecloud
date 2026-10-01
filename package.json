@@ -8,11 +8,13 @@
     "test": "node --test"
   },
   "dependencies": {
+    "anitomy-js": "^5.4.0",
     "axios": "^1.7.2",
     "express": "^4.19.2",
     "express-rate-limit": "^8.7.0",
     "proxy-agent": "^8.0.2",
-    "socks-proxy-agent": "^10.1.0"
+    "socks-proxy-agent": "^10.1.0",
+    "string-similarity": "^4.0.4"
   },
   "engines": {
     "node": ">=22.0.0"

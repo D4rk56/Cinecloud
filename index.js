@@ -42,6 +42,10 @@ const { startProwlarrWorker, stopProwlarrWorker } = require("./lib/prowlarr-work
 const { ALL_CATALOGS, checkTmdbKey } = require("./lib/helpers");
 const { getWarpStatus, checkAllDebridKey } = require("./lib/alldebrid");
 const { LOGO_SVG, BACKGROUND_SVG, renderConfigPage, renderAdminPage } = require("./lib/ui");
+const { loadAnimeMapping } = require("./lib/animeMapping");
+
+// Initialisation et indexation mémoire de la table communautaire Fribb anime-lists au boot
+loadAnimeMapping().catch(err => console.warn("[Server] AnimeMapping non disponible :", err.message));
 
 function getRequestProtocol(req) {
     const forwarded = req.headers["x-forwarded-proto"];

@@ -1542,3 +1542,249 @@ test("Admin API - Security, Maintenance, Backup, and Health Probe endpoints", as
         server.close();
     }
 });
+
+// =============================================================================
+// TESTS MODULES ANIME : PARSING, MAPPING, NORMALISATION & MATCHING
+// =============================================================================
+
+const {
+    parseAnimeTitle,
+    parseAnimeTitleFallback,
+    normalizeAnimeTitle,
+    isAnimeTitleMatch,
+    resolveEpisodeNumbering
+} = require("../lib/animeParser");
+
+const {
+    loadAnimeMapping,
+    getAnimeMappingByKitsu,
+    getAnimeMappingByImdb,
+    getAnimeMappingByImdbAndSeason,
+    getAnimeMappingByTvdb,
+    getAnimeMappingByTmdb,
+    sanitizeImdbId,
+    sanitizeKitsuId,
+    LruCache,
+    fetchKitsuDetails
+} = require("../lib/animeMapping");
+
+const { resolveKitsuMeta } = require("../lib/helpers");
+
+test("AnimeParser - Extraction de métadonnées et parsing avec Anitomy et fallback", () => {
+    // 1. Release classique avec numéro d'épisode absolu à trois chiffres
+    const res1 = parseAnimeTitle("[SubsPlease] Boku no Hero Academia - 139 (1080p) [ABCD1234].mkv");
+    assert.equal(res1.success, true);
+    assert.equal(res1.title, "Boku no Hero Academia");
+    assert.equal(res1.episode, 139);
+    assert.equal(res1.releaseGroup, "SubsPlease");
+    assert.equal(res1.resolution, "1080p");
+    assert.equal(res1.fileExtension, "mkv");
+
+    // 2. Release avec codec HEVC et groupe Erai-raws
+    const res2 = parseAnimeTitle("[Erai-raws] Jujutsu Kaisen - 01 [1080p][HEVC].mkv");
+    assert.equal(res2.success, true);
+    assert.equal(res2.title, "Jujutsu Kaisen");
+    assert.equal(res2.episode, 1);
+    assert.equal(res2.releaseGroup, "Erai-raws");
+    assert.equal(res2.resolution, "1080p");
+
+    // 3. Release batch (plage d'épisodes)
+    const res3 = parseAnimeTitle("[SubsPlease] Spy x Family - 01-12 [1080p].mkv");
+    assert.equal(res3.success, true);
+    assert.equal(res3.isBatch, true);
+    assert.equal(res3.episode, 1);
+    assert.equal(res3.episodeEnd, 12);
+
+    // 4. Test du parser fallback sur format standard SxxExx
+    const resFallback = parseAnimeTitleFallback("[EMBER] Shingeki no Kyojin S02E05 [1080p].mkv");
+    assert.equal(resFallback.success, true);
+    assert.equal(resFallback.season, 2);
+    assert.equal(resFallback.episode, 5);
+    assert.equal(resFallback.releaseGroup, "EMBER");
+
+    // 5. Résilience face aux entrées nulles ou malformées (anti-crash)
+    const resNull = parseAnimeTitle(null);
+    assert.equal(resNull.success, false);
+    assert.equal(resNull.episode, null);
+
+    const resEmpty = parseAnimeTitle("");
+    assert.equal(resEmpty.success, false);
+});
+
+test("AnimeParser - Détection des saisons intégrées au titre (faux positifs de saison)", () => {
+    // 1. "2nd Season" dans le nom de l'anime
+    const res1 = parseAnimeTitle("[Erai-raws] Jujutsu Kaisen 2nd Season - 05 [1080p][HEVC].mkv");
+    assert.equal(res1.season, 2);
+    assert.equal(res1.episode, 5);
+    assert.equal(res1.baseTitle, "Jujutsu Kaisen");
+
+    // 2. "The Final Season Part 2"
+    const res2 = parseAnimeTitle("[EMBER] Shingeki no Kyojin The Final Season Part 2 - 01 [1080p].mkv");
+    assert.equal(res2.season, 4);
+    assert.equal(res2.episode, 1);
+    assert.ok(res2.baseTitle.includes("Shingeki no Kyojin"));
+
+    // 3. "Season 3"
+    const res3 = parseAnimeTitle("[SubsPlease] Mob Psycho 100 Season 3 - 08 (1080p).mkv");
+    assert.equal(res3.season, 3);
+    assert.equal(res3.episode, 8);
+    assert.equal(res3.baseTitle, "Mob Psycho 100");
+});
+
+test("AnimeParser - Normalisation des titres et gestion du Romaji / plein chasse", () => {
+    // Plein chasse (Fullwidth ASCII japonais)
+    const norm1 = normalizeAnimeTitle("Ｓｈｉｎｇｅｋｉ no Kyojin");
+    assert.equal(norm1, "shingeki no kyojin");
+
+    // Diacritiques et macrons romaji (ō -> o, ū -> u)
+    const norm2 = normalizeAnimeTitle("Shingeki no Kyōjin: The Final Season");
+    assert.equal(norm2, "shingeki no kyojin the final season");
+
+    // Suppression ponctuation, crochets et parenthèses métadonnées
+    const norm3 = normalizeAnimeTitle("[SubsPlease] Boku no Hero Academia (TV) (2024) [1080p]!");
+    assert.equal(norm3, "boku no hero academia");
+});
+
+test("AnimeParser - Fuzzy matching de titres avec string-similarity et alias", () => {
+    // 1. Match exact via alias officiel
+    const match1 = isAnimeTitleMatch(
+        "Shingeki no Kyojin",
+        "Attack on Titan",
+        ["Shingeki no Kyojin", "AoT"]
+    );
+    assert.equal(match1.isMatch, true);
+    assert.equal(match1.similarity, 1.0);
+
+    // 2. Fuzzy match avec titre légèrement altéré
+    const match2 = isAnimeTitleMatch(
+        "Kimetsu no Yaiba Swordsmith Village Arc",
+        "Kimetsu no Yaiba: Katanakaji no Sato-hen",
+        ["Demon Slayer: Kimetsu no Yaiba Swordsmith Village Arc"],
+        0.82
+    );
+    assert.equal(match2.isMatch, true);
+    assert.ok(match2.similarity >= 0.82);
+
+    // 3. Rejet d'un anime complètement différent
+    const matchMismatch = isAnimeTitleMatch(
+        "Naruto Shippuden",
+        "Attack on Titan",
+        ["Shingeki no Kyojin"],
+        0.82
+    );
+    assert.equal(matchMismatch.isMatch, false);
+});
+
+test("AnimeParser - Résolution de la numérotation absolue vs saison/épisode", () => {
+    // AOT : Saison 1 (25 épisodes), Saison 2 (12 épisodes)
+    const seasonCounts = { 1: 25, 2: 12, 3: 22 };
+
+    // S02E05 -> Épisode absolu 30
+    const absRes = resolveEpisodeNumbering({ season: 2, episode: 5 }, seasonCounts);
+    assert.equal(absRes.absoluteEpisode, 30);
+    assert.equal(absRes.season, 2);
+    assert.equal(absRes.episode, 5);
+
+    // Épisode absolu 30 sans saison -> Saison 2, Épisode 5
+    const relRes = resolveEpisodeNumbering({ episode: 30 }, seasonCounts);
+    assert.equal(relRes.season, 2);
+    assert.equal(relRes.episode, 5);
+    assert.equal(relRes.absoluteEpisode, 30);
+    assert.equal(relRes.isAbsolute, true);
+
+    // S01E10 -> Épisode absolu 10
+    const s1Res = resolveEpisodeNumbering({ season: 1, episode: 10 }, seasonCounts);
+    assert.equal(s1Res.absoluteEpisode, 10);
+    assert.equal(s1Res.season, 1);
+    assert.equal(s1Res.episode, 10);
+});
+
+test("AnimeMapping - Indexation en mémoire O(1) de la table Fribb et mapping kitsu/imdb/tvdb/tmdb", async () => {
+    const loadRes = await loadAnimeMapping();
+    assert.equal(loadRes.isLoaded, true);
+    assert.ok(loadRes.count > 0, "Doit avoir indexé les animés");
+
+    // 1. Lookup instantané par Kitsu ID
+    const aotS1 = getAnimeMappingByKitsu(7442);
+    assert.ok(aotS1, "Doit trouver Attack on Titan S1 par kitsu_id 7442");
+    assert.equal(aotS1.imdbId, "tt2560140");
+    assert.equal(aotS1.season, 1);
+    assert.equal(aotS1.tvdbId, 267440);
+    assert.equal(aotS1.tmdbId, 1429);
+
+    const aotS2 = getAnimeMappingByKitsu("kitsu:8671:1");
+    assert.ok(aotS2, "Doit trouver Attack on Titan S2 par kitsu_id 8671");
+    assert.equal(aotS2.imdbId, "tt2560140");
+    assert.equal(aotS2.season, 2);
+
+    // 2. Lookup instantané par IMDb ID
+    const aotImdbList = getAnimeMappingByImdb("tt2560140");
+    assert.ok(Array.isArray(aotImdbList));
+    assert.ok(aotImdbList.length >= 4, "AOT doit avoir plusieurs saisons");
+
+    // 3. Lookup par IMDb ID et saison spécifique
+    const s2ByImdb = getAnimeMappingByImdbAndSeason("tt2560140", 2);
+    assert.ok(s2ByImdb);
+    assert.equal(s2ByImdb.kitsuId, 8671);
+    assert.equal(s2ByImdb.season, 2);
+
+    // 4. Lookup par TVDB ID
+    const byTvdb = getAnimeMappingByTvdb(267440);
+    assert.ok(byTvdb.length > 0);
+
+    // 5. Lookup par TMDB ID
+    const byTmdb = getAnimeMappingByTmdb(1429, "tv");
+    assert.ok(byTmdb.length > 0);
+});
+
+test("AnimeMapping - Sanitization stricte des identifiants (protection injection & DoS)", () => {
+    // Valid IMDb IDs
+    assert.equal(sanitizeImdbId("tt2560140"), "tt2560140");
+    assert.equal(sanitizeImdbId("tt2560140:1:5"), "tt2560140");
+
+    // Injections SQL et chaînes malveillantes
+    assert.equal(sanitizeImdbId("tt12345' OR '1'='1"), null);
+    assert.equal(sanitizeImdbId("DROP TABLE users;"), null);
+    assert.equal(sanitizeImdbId("<script>alert(1)</script>"), null);
+    assert.equal(sanitizeImdbId(""), null);
+    assert.equal(sanitizeImdbId(null), null);
+
+    // Valid Kitsu IDs
+    assert.equal(sanitizeKitsuId(7442), 7442);
+    assert.equal(sanitizeKitsuId("7442"), 7442);
+    assert.equal(sanitizeKitsuId("kitsu:7442:25"), 7442);
+
+    // Injections Kitsu
+    assert.equal(sanitizeKitsuId("../../etc/passwd"), null);
+    assert.equal(sanitizeKitsuId("abc"), null);
+    assert.equal(sanitizeKitsuId(-5), null);
+});
+
+test("AnimeMapping - Cache LRU et gestion d'éviction", () => {
+    const lru = new LruCache(3, 1000);
+    lru.set("a", 1);
+    lru.set("b", 2);
+    lru.set("c", 3);
+    assert.equal(lru.get("a"), 1);
+    assert.equal(lru.get("b"), 2);
+    assert.equal(lru.get("c"), 3);
+
+    // Ajout d'un 4ème élément : 'a' a été accédé récemment, le plus ancien est 'b'
+    lru.get("a"); // a rafraîchi
+    lru.set("d", 4); // éviction du plus ancien (b)
+    assert.equal(lru.get("b"), null);
+    assert.equal(lru.get("a"), 1);
+    assert.equal(lru.get("d"), 4);
+});
+
+test("Helpers - resolveKitsuMeta utilise le mapping Fribb et retourne la saison exacte", async () => {
+    // Test avec Kitsu 8671 (AOT Saison 2, Épisode 3)
+    const meta = await resolveKitsuMeta("kitsu:8671:3");
+    assert.ok(meta);
+    assert.equal(meta.imdbId, "tt2560140");
+    assert.equal(meta.season, 2);
+    assert.equal(meta.episode, 3);
+    assert.ok(meta.name.includes("Attack on Titan") || meta.name.includes("Shingeki no Kyojin"));
+    assert.ok(Array.isArray(meta.aliases));
+});
+
