@@ -137,11 +137,17 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             enabledCatalogs
         } = req.body;
 
-        const debridProvider = (req.body.debridProvider === "torbox") ? "torbox" : "alldebrid";
+        const debridProvider = (req.body.debridProvider === "torbox")
+            ? "torbox"
+            : (req.body.debridProvider === "both" ? "both" : "alldebrid");
         const apiKey = req.body.apiKey ? req.body.apiKey.trim() : "";
         const torboxApiKey = req.body.torboxApiKey ? req.body.torboxApiKey.trim() : (debridProvider === "torbox" ? apiKey : "");
 
-        if (debridProvider === "torbox") {
+        if (debridProvider === "both") {
+            if (!apiKey && !torboxApiKey) {
+                return res.status(400).json({ error: "Au moins une clé API (AllDebrid ou Torbox) est requise pour le mode combiné." });
+            }
+        } else if (debridProvider === "torbox") {
             if (!torboxApiKey) {
                 return res.status(400).json({ error: "La clé API Torbox est requise." });
             }
@@ -298,7 +304,7 @@ app.post("/api/user/update", authLimiter, (req, res) => {
             : (currentConfig.prowlarrMode || user.prowlarrMode || "local");
 
         const resolvedDebridProvider = debridProvider !== undefined
-            ? (debridProvider === "torbox" ? "torbox" : "alldebrid")
+            ? (debridProvider === "torbox" ? "torbox" : (debridProvider === "both" ? "both" : "alldebrid"))
             : (currentConfig.debridProvider || "alldebrid");
 
         const updatedConfig = {

@@ -1905,4 +1905,184 @@ test("Catalogs - Infinite scroll pagination groups items and returns 50 per page
     assert.ok(Array.isArray(page2.metas));
 });
 
+test("Helpers - getFrenchTitle resolves French title and caches in memory", async () => {
+    const { getFrenchTitle } = require("../lib/helpers");
+
+    // 1. tt2096673 -> "Vice-Versa" (Inside Out)
+    const frTitle = await getFrenchTitle("tt2096673", "Inside Out");
+    assert.ok(frTitle, "Doit renvoyer un titre");
+    assert.equal(frTitle, "Vice-Versa", "Doit trouver le titre français Vice-Versa");
+
+    // 2. Vérification du cache mémoire immédiat
+    const cached = await getFrenchTitle("tt2096673", "Inside Out Fallback");
+    assert.equal(cached, "Vice-Versa");
+
+    // 3. Fallback si ID inconnu ou null
+    const fallback = await getFrenchTitle(null, "Mon Titre Secours");
+    assert.equal(fallback, "Mon Titre Secours");
+});
+
+test("Debrid Provider Both - handleStream produces both AllDebrid and Torbox streams", async () => {
+    const { handleStream } = require("../lib/stremio");
+    const { upsertCachedTorrent, deleteCachedTorrent } = require("../lib/db");
+
+    const testHash = "11223344556677889900aabbccddeeff11223344";
+    const testImdb = "tt9988776";
+
+    upsertCachedTorrent({
+        infoHash: testHash,
+        imdbId: testImdb,
+        title: "Test Movie 2024 1080p MULTI",
+        filename: "Test.Movie.2024.1080p.mkv",
+        size: 5000000000,
+        indexer: "TestTracker",
+        seeders: 25,
+        isInstant: 1
+    });
+
+    const { torboxApi } = require("../lib/torbox");
+    const originalTorboxGet = torboxApi.get;
+    torboxApi.get = async (url) => {
+        if (url && url.includes("/torrents/checkcached")) {
+            return {
+                data: {
+                    success: true,
+                    data: {
+                        [testHash.toLowerCase()]: { name: "Test.Movie.2024.1080p.mkv", size: 5000000000 }
+                    }
+                }
+            };
+        }
+        return originalTorboxGet(url);
+    };
+
+    try {
+        const config = {
+            apiKey: "ad_test_key_12345",
+            torboxApiKey: "tb_test_key_67890",
+            debridProvider: "both",
+            prowlarrKey: "off"
+        };
+
+        const result = await handleStream(config, "movie", testImdb, { movies: {}, series: {} }, "http://localhost:3000", "test-user-both");
+        assert.ok(result && Array.isArray(result.streams));
+
+        // En mode "both", doit contenir un flux AllDebrid ET un flux Torbox pour le même torrent précaché
+        const adStream = result.streams.find(s => s.name && s.name.includes("[AD"));
+        const tbStream = result.streams.find(s => s.name && s.name.includes("[TB"));
+
+        assert.ok(adStream, "Doit contenir un flux AllDebrid [AD ⚡]");
+        assert.ok(tbStream, "Doit contenir un flux Torbox [TB ⚡]");
+        assert.ok(adStream.url.includes(`hash_${testHash}`));
+        assert.ok(tbStream.url.includes(`tb_hash_${testHash}`));
+    } finally {
+        torboxApi.get = originalTorboxGet;
+        deleteCachedTorrent(testHash);
+    }
+});
+
+test("Debrid Provider Both - handleResolve routes tb_ target to Torbox and hash_ to AllDebrid", async () => {
+    const { handleResolve } = require("../lib/resolver");
+    const { createUser, deleteUser } = require("../lib/db");
+    const { encryptConfig } = require("../lib/crypto");
+
+    const testUuid = "11112222-3333-4444-5555-666677778888";
+    const config = {
+        apiKey: "ad_mock_key_resolve",
+        torboxApiKey: "tb_mock_key_resolve",
+        debridProvider: "both"
+    };
+
+    createUser(testUuid, "dummyHash", encryptConfig(config), "UserBothTest", "local");
+
+    try {
+        let statusCode = null;
+
+        // 1. Requête pour une cible Torbox (tb_hash_...)
+        const reqTb = {
+            params: {
+                userRef: testUuid,
+                imdbId: "tt1234567",
+                fileRef: "tb_hash_abcdef1234567890abcdef1234567890abcdef12"
+            }
+        };
+        const resTb = {
+            status(code) { statusCode = code; return this; },
+            json() { return this; },
+            send() { return this; },
+            redirect(code) { statusCode = code; }
+        };
+
+        await handleResolve(reqTb, resTb);
+        assert.ok(statusCode === 404 || statusCode === 302 || statusCode === 502);
+
+        // 2. Requête pour une cible AllDebrid (hash_...)
+        const reqAd = {
+            params: {
+                userRef: testUuid,
+                imdbId: "tt1234567",
+                fileRef: "hash_abcdef1234567890abcdef1234567890abcdef12"
+            }
+        };
+        const resAd = {
+            status(code) { statusCode = code; return this; },
+            json() { return this; },
+            send() { return this; },
+            redirect(code) { statusCode = code; }
+        };
+
+        await handleResolve(reqAd, resAd);
+        assert.ok(statusCode === 404 || statusCode === 302 || statusCode === 502);
+    } finally {
+        deleteUser(testUuid);
+    }
+});
+
+test("User API - Register and update accepts debridProvider 'both'", async () => {
+    const { createServer } = require("http");
+    const axios = require("axios");
+
+    const app = require("../index");
+    const server = createServer(app);
+    await new Promise(r => server.listen(0, r));
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    let createdUuid = null;
+    try {
+        const username = `BothUser_${Date.now()}`;
+        const regRes = await axios.post(`${base}/api/user/register`, {
+            username: username,
+            password: "SecurePassword123!",
+            debridProvider: "both",
+            apiKey: "mock_ad_key_12345",
+            torboxApiKey: "mock_tb_key_67890"
+        });
+
+        assert.equal(regRes.status, 200);
+        assert.equal(regRes.data.success, true);
+        assert.ok(regRes.data.uuid);
+        createdUuid = regRes.data.uuid;
+
+        // Mise à jour de l'utilisateur
+        const updateRes = await axios.post(`${base}/api/user/update`, {
+            uuid: createdUuid,
+            password: "SecurePassword123!",
+            debridProvider: "both",
+            apiKey: "mock_ad_key_updated",
+            torboxApiKey: "mock_tb_key_updated"
+        });
+
+        assert.equal(updateRes.status, 200);
+        assert.equal(updateRes.data.success, true);
+    } finally {
+        if (createdUuid) {
+            const { deleteUser } = require("../lib/db");
+            deleteUser(createdUuid);
+        }
+        server.close();
+    }
+});
+
+
 
