@@ -86,6 +86,21 @@ test("Helpers - extractCleanTitle cleans trackers, brackets and quality prefixes
     const res3 = extractCleanTitle("Sharewood.tv-Inception.2010.FRENCH.1080p.mkv");
     assert.equal(res3.title, "Inception");
     assert.equal(res3.year, "2010");
+
+    const res4 = extractCleanTitle("Blade.Runner.2049.2017.MULTi.1080p.BluRay.x264.mkv");
+    assert.equal(res4.title, "Blade Runner 2049");
+    assert.equal(res4.year, "2017");
+
+    const res5 = extractCleanTitle("1917.2019.FRENCH.1080p.BluRay.mkv");
+    assert.equal(res5.title, "1917");
+    assert.equal(res5.year, "2019");
+
+    const res6 = extractCleanTitle("Inception.EXTENDED.REPACK.1080p.BluRay.mkv");
+    assert.equal(res6.title, "Inception");
+
+    const res7 = extractCleanTitle("Dune.Part.Two.2024.2160p.UHD.HDR.mkv");
+    assert.equal(res7.title, "Dune Part Two");
+    assert.equal(res7.year, "2024");
 });
 
 test("Resolver - pickBestVideoFile handles ad_series format without NaN", () => {
@@ -214,6 +229,48 @@ test("Helpers - isConfidentTitleMatch rejects error strings and unrelated titles
 
     // Rejet en cas d'écart d'année excessif
     assert.equal(isConfidentTitleMatch("Gladiator II", "Gladiator", "2024", "2000"), false);
+
+    // Rejet strict des suites et chiffres romains même sans années fournies
+    assert.equal(isConfidentTitleMatch("Gladiator", "Gladiator II"), false, "Gladiator ne doit pas matcher Gladiator II");
+    assert.equal(isConfidentTitleMatch("Gladiator II", "Gladiator"), false, "Gladiator II ne doit pas matcher Gladiator");
+    assert.equal(isConfidentTitleMatch("Avatar", "Avatar 2"), false, "Avatar ne doit pas matcher Avatar 2");
+    assert.equal(isConfidentTitleMatch("Dune", "Dune: Part Two"), false, "Dune ne doit pas matcher Dune Part Two");
+    assert.equal(isConfidentTitleMatch("Dune Part Two", "Dune: Part Two"), true, "Dune Part Two doit matcher Dune: Part Two");
+    assert.equal(isConfidentTitleMatch("Blade Runner", "Blade Runner 2049"), false, "Blade Runner ne doit pas matcher Blade Runner 2049");
+    assert.equal(isConfidentTitleMatch("Spider Man", "Spider Man No Way Home"), false, "Spider Man ne doit pas matcher Spider Man No Way Home");
+});
+
+test("Helpers - filterAndSortStreams prioritizes cloud streams when prioritizeCloud is true", () => {
+    const { filterAndSortStreams } = require("../lib/helpers");
+
+    const streams = [
+        { title: "Release 4K Prowlarr", _size: 20 * 1024 * 1024 * 1024, _resolution: "4k", _lang: "vff", _isCloud: false },
+        { title: "Release 1080p Cloud", _size: 4 * 1024 * 1024 * 1024, _resolution: "1080p", _lang: "vff", _isCloud: true },
+        { title: "Release 720p Lumio", _size: 2 * 1024 * 1024 * 1024, _resolution: "720p", _lang: "vff", _isCloud: false }
+    ];
+
+    // Sans priorisation cloud : 4K passe en premier
+    const defaultSorted = filterAndSortStreams(streams, { prioritizeCloud: false });
+    assert.equal(defaultSorted[0].title, "Release 4K Prowlarr");
+
+    // Avec priorisation cloud : le fichier Cloud passe en tout premier
+    const cloudSorted = filterAndSortStreams(streams, { prioritizeCloud: true });
+    assert.equal(cloudSorted[0].title, "Release 1080p Cloud");
+    assert.equal(cloudSorted[1].title, "Release 4K Prowlarr");
+
+    // Avec priorisation cloud et tri par taille : Cloud reste en premier
+    const sizeCloudSorted = filterAndSortStreams(streams, { prioritizeCloud: true, sortBy: "size" });
+    assert.equal(sizeCloudSorted[0].title, "Release 1080p Cloud");
+    assert.equal(sizeCloudSorted[1].title, "Release 4K Prowlarr");
+});
+
+test("Helpers - searchCinemeta finds accurate candidate with expectedYear", async () => {
+    const { searchCinemeta } = require("../lib/helpers");
+    const res = await searchCinemeta("Gladiator II", "movie", "2024");
+    if (res) {
+        assert.ok(res.name.toLowerCase().includes("gladiator"), "Doit trouver le film Gladiator");
+        assert.ok(res.imdbId, "Doit avoir un identifiant IMDb valide");
+    }
 });
 
 test("Catalogs - Recommendations catalogs are present in ALL_CATALOGS and manifest", () => {
