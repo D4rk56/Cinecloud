@@ -1,115 +1,109 @@
-# ☁️🎬 Nuvio Alldebrid Addon (Auto-hébergé)
+# ☁️🎬 Cinécloud
 
-Addon Alldebrid auto-hébergé pour **Nuvio**, conçu pour organiser votre bibliothèque Alldebrid et vous offrir une intégration fluide (films, séries, métadonnées et lecture directe).
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fd4rk56%2Fnuvio--alldebrid-blue?logo=docker)](https://github.com/D4rk56/nuvio-alldebrid/pkgs/container/nuvio-alldebrid)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen?logo=node.js)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Debrid](https://img.shields.io/badge/debrid-AllDebrid%20%7C%20Torbox-orange)](https://alldebrid.com)
 
-L'application agit en tant que serveur relais local pour débrider les liens via votre propre IP résidentielle (évitant les blocages de datacenters de certains hébergeurs).
+**Cinécloud** est un addon auto-hébergé haute performance pour **Stremio** et **Nuvio**, spécialement conçu pour offrir une expérience de streaming fluide, instantanée et organisée.
 
----
-
-## 🛡️ Contournement des blocages IP Alldebrid (Cloudflare WARP)
-
-Lorsque vous hébergez cet addon sur un **VPS ou serveur Cloud** (OVH, Hetzner, Scaleway, Oracle, AWS, etc.), **Alldebrid bloque ou restreint fréquemment les requêtes de débridage (`/link/unlock`)** car l'adresse IP provient d'un datacenter.
-
-Pour résoudre ce problème de manière transparente :
-- Un conteneur sidecar **Cloudflare WARP** (`caomingjun/warp`) est intégré dans nos fichiers Docker Compose.
-- Il génère automatiquement un compte WARP gratuit au démarrage et achemine le trafic sortant de Nuvio via le réseau Cloudflare Edge avec une **adresse IP résidentielle/clean**, acceptée sans restriction par Alldebrid.
-- **Zéro configuration manuelle requise.**
-
-> [!TIP]
-> **Vous hébergez sur votre machine personnelle / Box Internet (IP résidentielle) ?**  
-> Vous n'avez pas besoin de WARP. Vous pouvez simplement commenter le service `warp` ainsi que la ligne `WARP_PROXY=http://warp:1080` dans votre fichier `docker-compose.yml` : l'application effectuera alors ses requêtes directement sans proxy.
+Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise vos indexeurs **Prowlarr** en tâche de fond et à la demande, intègre un parseur spécialisé pour les **animés**, et offre une interface moderne avec profils en 1 clic et panneau d'administration en temps réel.
 
 ---
 
-## 📋 Prérequis
+## ✨ Fonctionnalités Principales
 
-- **Docker & Docker Compose** (recommandé pour une installation simple et isolée)  
-  *OU*
-- **Node.js** (version 22 ou supérieure recommandée) et **npm**
+### ⚡ Double Support Débrideur (AllDebrid & Torbox)
+- **AllDebrid** : Intégration complète avec débridage instantané, flux Cloud personnels (*Mes Magnets*, *Liens Débridés*, *Historique*) et gestion du pré-cache.
+- **Torbox** : Support complet avec vérification instantanée de disponibilité et lecture directe haute performance.
+- **Résolveur Lazy intelligent** : Redirection 302 instantanée vers les flux CDN avec bascule automatique (failover) sur les miroirs disponibles.
+
+### 🛡️ Contournement des Blocages IP VPS (Cloudflare WARP)
+- Sur un serveur VPS ou Cloud (Hetzner, OVH, Scaleway, Oracle, etc.), les requêtes vers AllDebrid peuvent être restreintes en raison des IP de datacenters.
+- Cinécloud intègre un conteneur sidecar **Cloudflare WARP** qui achemine les requêtes de débridage via une IP résidentielle/edge propre et acceptée sans restriction.
+- Les requêtes Cinemeta, TMDB et le trafic de streaming vidéo direct restent acheminés hors proxy pour une vitesse maximale.
+
+### 🔍 Indexation Prowlarr & Crowdsourcing Intelligent
+- **Cache mutualisé SQLite (WAL)** : Tous les torrents indexés et vérifiés comme instantanément disponibles sont partagés entre utilisateurs selon le mode choisi (*Partagé*, *Local* ou *Privé*).
+- **Synchronisation RSS d'arrière-plan** : Alimentation continue des dernières sorties films et séries.
+- **Recherche à la demande (On-Demand)** : Interrogation instantanée de votre Prowlarr lorsqu'un contenu n'est pas encore en cache.
+- **Intégration Lumio** : Option pour enrichir les flux instantanés à la demande via votre manifest perso Lumio.
+
+### 🇯🇵 Module Spécialisé Animés (Anitomy & Mapping Fribb)
+- **Extraction précise des métadonnées** via `@iktakahiro/anitomy-js` (titre épuré, saison, épisode, groupe de release, résolution, codec).
+- **Mapping communautaire Fribb (`anime-lists`)** indexé en mémoire au démarrage pour une conversion instantanée `Kitsu` ↔ `IMDb` ↔ `TheTVDB` ↔ `TMDB`.
+- **Fuzzy matching** et normalisation robuste pour réconcilier les numérotations absolues (ex. *Ep 35*) avec les saisons IMDb/TMDB (ex. *S02E11*).
+
+### 🎨 Formateur de Flux Épuré & Lisible
+- Format compact style AIOStreams en 2 colonnes :
+  - **Gauche :** `[AD ⚡]` ou `[TB ⚡]` + Résolution (`4K ⭐`, `1080p ⭐`, etc.).
+  - **Droite :** Titre propre, détails vidéo/audio, langues audio (`🇫🇷 MULTI / VFF`, `🇬🇧 VO`), provenance de l'indexeur et badge de cache clair (`⚡ Cache Global`, `⚡ Pré-cache RSS`, `⚡ Instantané Lumio` ou `⏳ Téléchargement`).
+
+### 📱 Configuration Ergonomique & Profils en 1 Clic
+- **3 Profils Rapides en 1 clic** :
+  - 📱 **Mobile 4G** : 1080p max, limitation de taille de fichier (~6 Go), économie de données.
+  - 📺 **Smart TV** : 4K & 1080p équilibré, tri par qualité et disponibilité immédiate.
+  - 🍿 **Home Cinéma** : 4K HDR/Dolby Vision en priorité, aucune limite de taille (Remux / Bitrate maximal).
+- **QR Code dynamique** : Affichez un QR Code dans l'interface pour installer l'addon en un éclair sur votre TV ou smartphone.
+- **Mise à jour sans réinstallation** : Modifiez vos réglages (langues, résolutions, tris) à tout moment grâce à votre UUID et mot de passe, sans réinstaller l'addon dans Stremio.
+
+### 🛡️ Panneau d'Administration en Temps Réel (`/admin`)
+- **Tableau de bord KPI** : Utilisateurs inscrits, actifs 24h, torrents en cache et **Taux de Disponibilité Instantanée (%)**.
+- **Sondes de santé en direct** : Test instantané de latence et connectivité des APIs AllDebrid et Torbox.
+- **Classement des Top Recherches** : Visualisation des titres les plus demandés avec filtre textuel en direct.
+- **Gestion des comptes** : Recherche instantanée dans les utilisateurs et suppression en 1 clic.
+- **Console de logs avancée** : Filtrage par niveau (`INFO`, `WARN`, `ERROR`), recherche textuelle instantanée, bouton pause du défilement et copie dans le presse-papiers.
+- **Maintenance SQLite** : Purge des torrents expirés (+30j), optimisation (`VACUUM` / checkpoint WAL) et téléchargement de backup en 1 clic.
 
 ---
 
-## 🐳 Déploiement avec Docker Compose (Recommandé)
+## 🚀 Déploiement Rapide avec Docker Compose
 
-Deux modes de déploiement Docker Compose sont disponibles selon votre infrastructure réseau.
+L'image officielle est disponible sur **GitHub Container Registry (GHCR)** :
+`ghcr.io/d4rk56/nuvio-alldebrid:latest` *(compatible architectures `linux/amd64` et `linux/arm64`)*.
 
-L'image est automatiquement compilée et publiée sur **GitHub Container Registry (GHCR)** :
-`ghcr.io/d4rk56/nuvio-alldebrid:latest` *(compatible multi-architecture `linux/amd64` et `linux/arm64` pour Raspberry Pi / VPS ARM / Apple Silicon)*.
-
-Vous pouvez au choix :
-- **Utiliser l'image pré-compilée :** `docker compose pull nuvio && docker compose up -d`
-- **Compiler localement les sources :** `docker compose up -d --build`
-
-### Option 1 : Déploiement avec Cloudflare Tunnel & WARP (Accès distant sans ouvrir de port)
+### Option 1 : Déploiement avec Cloudflare Tunnel & WARP (Recommandé)
 
 Ce mode lance :
-1. **`warp`** : Le proxy Cloudflare WARP pour contourner les blocages Alldebrid.
-2. **`nuvio`** : L'addon Nuvio Alldebrid (image GHCR ou build local).
-3. **`tunnel`** : Un conteneur Cloudflare Tunnel éphémère (`trycloudflare.com`) pour accéder à l'addon depuis n'importe où (TV, smartphone) **sans ouvrir de port sur votre box / pare-feu**.
+1. **`warp`** : Proxy Cloudflare WARP pour contourner les blocages VPS.
+2. **`cinecloud`** : L'addon Cinécloud.
+3. **`tunnel`** : Cloudflare Tunnel éphémère (`trycloudflare.com`) pour un accès HTTPS sécurisé **sans ouvrir de port sur votre routeur**.
 
 #### 1. Démarrer les services
 ```bash
 docker compose up -d
 ```
-*(ou `docker compose up -d --build` pour forcer la compilation locale)*
 
-#### 2. Récupérer l'URL publique Cloudflare
-Une fois les conteneurs démarrés, affichez les logs du tunnel pour récupérer votre URL sécurisée `https://xxxx.trycloudflare.com` :
-
-- **Linux / macOS :**
-  ```bash
-  docker logs nuvio-tunnel 2>&1 | grep trycloudflare
-  ```
-- **Windows (PowerShell) :**
-  ```powershell
-  docker logs nuvio-tunnel 2>&1 | Select-String trycloudflare
-  ```
-
-#### 3. Vérifier le bon fonctionnement de Cloudflare WARP
+#### 2. Récupérer l'URL sécurisée
+Affichez les logs du tunnel pour récupérer votre URL `https://xxxx.trycloudflare.com` :
 ```bash
-docker logs nuvio-warp
+docker logs cinecloud-tunnel 2>&1 | grep trycloudflare
 ```
-Vous devriez voir `Status: Connected` et l'adresse de proxy prête sur le port 1080.
 
-#### 4. Configurer l'addon
-Ouvrez l'URL obtenue dans votre navigateur web pour accéder à l'interface de configuration, saisir votre clé API Alldebrid et installer le lien dans Nuvio.
-
-#### 5. Arrêter les services
-```bash
-docker compose down
-```
+#### 3. Configurer vos accès
+Ouvrez l'URL obtenue dans votre navigateur :
+- Page de configuration : `https://xxxx.trycloudflare.com/`
+- Panneau d'administration : `https://xxxx.trycloudflare.com/admin` (mot de passe par défaut : `admin123`)
 
 ---
 
-### Option 2 : Déploiement derrière un Reverse Proxy (avec WARP)
+### Option 2 : Déploiement derrière un Reverse Proxy (Nginx, Traefik, Caddy)
 
-Si vous disposez déjà de votre propre nom de domaine et d'un Reverse Proxy (Nginx, Caddy, Traefik, Nginx Proxy Manager, SWAG, etc.), utilisez le fichier Compose dédié :
+Si vous possédez votre propre nom de domaine :
 
 ```bash
-docker compose -f docker-compose.reverse-proxy.yml up -d --build
+docker compose -f docker-compose.reverse-proxy.yml up -d
 ```
 
-- **Sécurité :** Ce mode lie le port de l'addon exclusivement sur `127.0.0.1:3000` (localhost), empêchant toute exposition directe non filtrée sur Internet.
-- **WARP inclus :** Vos requêtes vers Alldebrid continuent de bénéficier du bypass WARP.
-- **Arrêt :**
-  ```bash
-  docker compose -f docker-compose.reverse-proxy.yml down
-  ```
+Ce mode lie le port de l'addon exclusivement sur `127.0.0.1:3000` (localhost) pour une sécurité maximale.
 
-#### Exemples de configuration Reverse Proxy :
-
-<details>
-<summary><b>Exemple avec Nginx</b></summary>
-
+Exemple de bloc Nginx :
 ```nginx
 server {
-    server_name nuvio.mondomaine.fr;
+    server_name cinecloud.mondomaine.fr;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -117,91 +111,53 @@ server {
     }
 }
 ```
-</details>
 
-<details>
-<summary><b>Exemple avec Caddy</b></summary>
+---
 
-```caddy
-nuvio.mondomaine.fr {
-    reverse_proxy 127.0.0.1:3000
-}
+## ⚙️ Variables d'Environnement
+
+| Variable | Description | Valeur par défaut |
+| :--- | :--- | :--- |
+| `PORT` | Port d'écoute HTTP du serveur | `3000` |
+| `NODE_ENV` | Environnement d'exécution | `production` |
+| `WARP_PROXY` | Adresse du proxy WARP sortant (HTTP ou SOCKS5) | `http://warp:1080` |
+| `APP_SECRET` | Clé secrète AES-256-GCM pour le chiffrement des données | *Générée automatiquement si absente* |
+| `ADMIN_PASSWORD` | Mot de passe d'accès au panneau `/admin` | `admin123` |
+| `PROWLARR_URL` | URL de votre instance Prowlarr globale (optionnel) | `http://prowlarr:9696` |
+| `PROWLARR_KEY` | Clé API de votre instance Prowlarr globale (optionnel) | *Vide* |
+| `HTTP_TIMEOUT` | Timeout par défaut des requêtes AllDebrid (ms) | `10000` |
+| `PROWLARR_TIMEOUT` | Timeout des requêtes Prowlarr on-demand (ms) | `8000` |
+
+---
+
+## 🛠️ Développement Local
+
+```bash
+# 1. Cloner le projet
+git clone https://github.com/D4rk56/nuvio-alldebrid.git
+cd nuvio-alldebrid
+
+# 2. Installer les dépendances
+npm install
+
+# 3. Lancer les tests unitaires
+npm test
+
+# 4. Démarrer en développement
+npm start
 ```
-</details>
 
 ---
 
-## 💾 Persistance des données (Volumes & Base SQLite)
+## 🔒 Sécurité & Confidentialité
 
-- **`nuvio-data`** : Conserve la base de données SQLite embarquée (`/app/data/nuvio.db`). Grâce au mode **WAL (Write-Ahead Logging)**, l'accès au cache des correspondances IMDb/TMDB et classifications est instantané (`O(1)`), résistant aux pannes (transactions ACID, aucune corruption de fichier) et sans blocage de l'Event Loop.
-  - *Migration automatique :* Si vous possédiez un ancien fichier `id-cache.json`, celui-ci est automatiquement migré vers SQLite au premier démarrage.
-- **`nuvio-warp`** : Conserve l'enregistrement du compte WARP (`/var/lib/cloudflare-warp`) pour ne pas recréer de compte inutilement à chaque redémarrage.
-
----
-
-## 💻 Déploiement classique (sans Docker)
-
-Si vous préférez exécuter l'application directement avec Node.js :
-
-1. **Installer les dépendances :**
-   ```bash
-   npm install --omit=dev
-   ```
-
-2. **Démarrer l'application :**
-   ```bash
-   npm start
-   ```
-
-3. **Accéder à l'addon :**
-   Ouvrez [http://localhost:3000](http://localhost:3000) dans votre navigateur.
-
-*(Optionnel) Si vous souhaitez utiliser un proxy avec le mode classique : définissez la variable d'environnement `WARP_PROXY` ou `HTTP_PROXY` (ex: `export WARP_PROXY=http://127.0.0.1:1080`) avant de lancer `npm start`.*
+- **Chiffrement AES-256-GCM** : Toutes les clés API AllDebrid et Torbox sont chiffrées au repos dans la base SQLite locale.
+- **Hachage PBKDF2** : Les mots de passe utilisateurs sont hachés avec sel unique et 100 000 itérations.
+- **Protection Rate-Limiting** : Protection contre les attaques par force brute sur `/api/user/login`, `/api/admin/login` et les requêtes manifestes.
+- **Échappement XSS & Protection Injections** : Toutes les requêtes SQLite sont préparées (`db.prepare(...)`) et toutes les sorties HTML/logs sont strictement assainies.
 
 ---
 
-## 🔒 Bonnes pratiques de sécurité & Performance intégrées
+## 📜 Licence
 
-- **Architecture Multi-Utilisateurs & Sécurité Zéro Fuite :** L'URL du manifeste n'expose plus vos clés API en clair dans le chemin (`/:uuid/manifest.json`). Vos identifiants sont chiffrés au repos en **AES-256-GCM** via une clé dérivée de `APP_SECRET`. La gestion des réglages est sécurisée par un hachage de mot de passe cryptographique (`crypto.scrypt`) et protégée contre la force brute (`express-rate-limit`).
-- **Résolution de Flux "Lazy" avec Auto-Failover (< 5 ms) :** Les listes de flux Stremio sont construites instantanément en interrogeant les index locaux SQLite sans appel bloquant. La validation et le débridage se font à la volée lors de la lecture (`/resolve/:uuid/:imdbId/:fileRef`). Si un lien est mort (404/410), il est automatiquement purgé de la base et le meilleur candidat suivant prend le relais de manière transparente.
-- **Découplage Prowlarr & Worker RSS :** Plus aucun appel Prowlarr synchrone ne ralentit la navigation. Un worker d'arrière-plan synchronise périodiquement les releases Newznab (catégories 2000/5000), vérifie l'instantanéité par lot auprès d'AllDebrid et alimente la table `cached_torrents`.
-- **Isolation Stricte du Proxy WARP :** Le proxy WARP est strictement isolé pour les requêtes à `api.alldebrid.com`. Les appels à TMDB, Cinemeta, Lumio et Prowlarr s'effectuent en accès direct, éliminant tout ralentissement ou log verbeux.
-- **Base de données SQLite intégrée (`node:sqlite`) :** Mode WAL, normal synchronous et `busy_timeout=5000` pour une réactivité maximale et zéro corruption.
-- **Utilisateur non-root (`node`) :** Le conteneur s'exécute sous le compte utilisateur restreint `node` (UID 1000) et non en tant que `root`.
-- **Image minimale & moderne :** L'image Docker s'appuie sur `node:22-alpine` pour limiter la surface d'attaque et intégrer nativement SQLite sans dépendance de compilation C++.
-- **Dépendances de production :** Seules les dépendances nécessaires au fonctionnement en production (`--omit=dev`) sont installées.
-- **Healthcheck intégré :** Contrôle régulier de la santé des conteneurs via requêtes locales.
-- **Isolation réseau :** Exclusion des fichiers sensibles (`.env`, logs) via `.dockerignore`.
-
----
-
-## 🔌 Guide de Connexion Prowlarr dans Docker
-
-Si votre instance Prowlarr tourne sur la même machine dans un conteneur Docker ou sur l'hôte, voici comment la configurer pour éviter les erreurs de réseau ou de timeout :
-
-### Option 1 : Via la passerelle hôte (Recommandé - Sans modifier Prowlarr)
-Grâce à `extra_hosts: ["host.docker.internal:host-gateway"]` configuré dans `docker-compose.yml`, le conteneur peut joindre directement les ports publiés sur votre machine hôte :
-* **URL Prowlarr :** `http://host.docker.internal:9696` *(ou `http://host.docker.internal:9696/prowlarr` si vous avez configuré un sous-chemin d'URL)*.
-
-### Option 2 : Via un réseau Docker partagé
-Si votre Prowlarr est dans une autre stack Docker (ex: `medias_default` ou `proxy_net`), rattachez `nuvio` au même réseau Docker :
-```yaml
-# Dans docker-compose.yml sous le service 'nuvio' :
-    networks:
-      - default
-      - medias_net
-
-# À la racine de docker-compose.yml :
-networks:
-  default:
-  medias_net:
-    external: true
-    name: nom_du_reseau_prowlarr
-```
-* **URL Prowlarr :** `http://prowlarr:9696` *(ou `http://prowlarr:9696/prowlarr`)*.
-
-### Option 3 : Via l'adresse IP locale de votre machine
-Si Prowlarr est accessible sur votre réseau local :
-* **URL Prowlarr :** `http://192.168.1.50:9696` *(remplacez par l'IP LAN de votre serveur)*.
-
-> ⚠️ **Note sur les adresses IP `172.x.x.x` :** N'utilisez pas directement l'adresse IP interne d'un conteneur (`172.x.x.x`), car Docker bloque par défaut le routage direct entre réseaux bridge isolés (provoquant un timeout de connexion).
+Ce projet est sous licence MIT. Distribué pour un usage personnel et auto-hébergé.

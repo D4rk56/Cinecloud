@@ -547,7 +547,7 @@ app.get("/api/admin/backup", requireAdmin, (req, res) => {
     }
     checkpointDatabase();
     const dateStr = new Date().toISOString().slice(0, 10);
-    res.download(SQLITE_FILE, `cinecloud-nuvio-backup-${dateStr}.db`, (err) => {
+    res.download(SQLITE_FILE, `cinecloud-backup-${dateStr}.db`, (err) => {
         if (err && !res.headersSent) {
             res.status(500).json({ error: "Erreur lors du téléchargement du backup." });
         }
@@ -788,7 +788,7 @@ module.exports = app;
 if (require.main === module) {
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
-        console.log(`[Server] Addon CinéCloud FR en écoute sur le port ${PORT}`);
+        console.log(`[Server] Addon Cinécloud en écoute sur le port ${PORT}`);
         console.log(`[Server] Interface web accessible sur http://localhost:${PORT}`);
         console.log(`[Server] Panneau d'administration sur http://localhost:${PORT}/admin`);
     });

@@ -1,7 +1,7 @@
 {
-  "name": "nuvio-alldebrid-addon",
-  "version": "2.0.0",
-  "description": "Addon Alldebrid pour Nuvio - auto-hébergé",
+  "name": "cinecloud",
+  "version": "2.4.0",
+  "description": "Cinécloud - Addon de streaming haute performance pour Stremio et Nuvio avec AllDebrid, Torbox et Prowlarr",
   "main": "index.js",
   "scripts": {
     "start": "node --experimental-sqlite index.js",

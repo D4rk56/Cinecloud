@@ -2,7 +2,7 @@ services:
   # Service Cloudflare WARP : contourne les blocages d'IP Datacenter sur VPS
   warp:
     image: caomingjun/warp:latest
-    container_name: nuvio-warp
+    container_name: cinecloud-warp
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -13,7 +13,7 @@ services:
     environment:
       - WARP_SLEEP=2
     volumes:
-      - nuvio-warp:/var/lib/cloudflare-warp
+      - cinecloud-warp:/var/lib/cloudflare-warp
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -x http://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace || exit 1"]
       interval: 15s
@@ -24,12 +24,13 @@ services:
       default:
         aliases:
           - warp
+          - cinecloud-warp
           - nuvio-warp
 
-  nuvio:
+  cinecloud:
     image: ghcr.io/d4rk56/nuvio-alldebrid:latest
     build: .
-    container_name: nuvio-alldebrid
+    container_name: cinecloud
     restart: unless-stopped
     init: true
     ports:
@@ -52,22 +53,27 @@ services:
       # Permet de joindre Prowlarr sur la machine hôte via http://host.docker.internal:9696
       - "host.docker.internal:host-gateway"
     volumes:
-      - nuvio-data:/app/data
+      - cinecloud-data:/app/data
+    networks:
+      default:
+        aliases:
+          - cinecloud
+          - nuvio
 
     # Exemple pour intégration à un réseau partagé (Traefik, NPM, etc.) :
     # networks:
     #   - proxy_network
     # labels:
     #   - "traefik.enable=true"
-    #   - "traefik.http.routers.nuvio.rule=Host(`nuvio.mondomaine.fr`)"
-    #   - "traefik.http.routers.nuvio.entrypoints=websecure"
-    #   - "traefik.http.routers.nuvio.tls.certresolver=letsencrypt"
-    #   - "traefik.http.services.nuvio.loadbalancer.server.port=3000"
+    #   - "traefik.http.routers.cinecloud.rule=Host(`cinecloud.mondomaine.fr`)"
+    #   - "traefik.http.routers.cinecloud.entrypoints=websecure"
+    #   - "traefik.http.routers.cinecloud.tls.certresolver=letsencrypt"
+    #   - "traefik.http.services.cinecloud.loadbalancer.server.port=3000"
 
 volumes:
-  nuvio-data:
+  cinecloud-data:
     name: nuvio-alldebrid-data
-  nuvio-warp:
+  cinecloud-warp:
     name: nuvio-alldebrid-warp
 
 # networks:

@@ -131,11 +131,11 @@ test("Crypto - Password hashing and AES-256-GCM encryption", () => {
     assert.deepEqual(decrypted, config, "La configuration déchiffrée doit être strictement identique");
 });
 
-test("Stremio - handleManifest returns valid manifest with CinéCloud FR branding, logo and configure button", () => {
+test("Stremio - handleManifest returns valid manifest with Cinécloud branding, logo and configure button", () => {
     const manifest = handleManifest({ enabledCatalogs: "my_ad_magnets,my_ad_links" }, "https://cinecloud.fr", "test-uuid");
-    assert.equal(manifest.name, "CinéCloud FR");
+    assert.equal(manifest.name, "Cinécloud");
     assert.equal(manifest.id, "org.nuvio.alldebrid");
-    assert.equal(manifest.version, "2.3.0");
+    assert.equal(manifest.version, "2.4.0");
     assert.equal(manifest.logo, "https://cinecloud.fr/logo.png");
     assert.equal(manifest.background, "https://cinecloud.fr/background.png");
     assert.deepEqual(manifest.behaviorHints, { configurable: true, configurationRequired: false });
@@ -612,7 +612,7 @@ test("Helpers - filterAndSortStreams filters by resolution, language and limits"
     const { filterAndSortStreams } = require("../lib/helpers");
     const sampleStreams = [
         {
-            name: "CinéCloud FR\n1080p",
+            name: "Cinécloud\n1080p",
             description: "Gladiator II\n1080p • x264\n💾 4.00 GB • 250 👤\n🇫🇷 MULTI\n⚡ Prowlarr",
             _size: 4 * 1024 * 1024 * 1024,
             _resolution: "1080p",
@@ -620,7 +620,7 @@ test("Helpers - filterAndSortStreams filters by resolution, language and limits"
             _lang: "multi"
         },
         {
-            name: "CinéCloud FR\n4k",
+            name: "Cinécloud\n4k",
             description: "Gladiator II\n4k • HEVC\n💾 18.00 GB • 100 👤\n🇫🇷 VFF\n⚡ Prowlarr",
             _size: 18 * 1024 * 1024 * 1024,
             _resolution: "4k",
@@ -628,7 +628,7 @@ test("Helpers - filterAndSortStreams filters by resolution, language and limits"
             _lang: "vff"
         },
         {
-            name: "CinéCloud FR\n720p",
+            name: "Cinécloud\n720p",
             description: "Gladiator II\n720p • x264\n💾 2.00 GB • 50 👤\n🌐 Inconnu\n⚡ Prowlarr",
             _size: 2 * 1024 * 1024 * 1024,
             _resolution: "720p",
@@ -636,7 +636,7 @@ test("Helpers - filterAndSortStreams filters by resolution, language and limits"
             _lang: "unknown"
         },
         {
-            name: "CinéCloud FR\n480p",
+            name: "Cinécloud\n480p",
             description: "Gladiator II\n480p • XviD\n💾 0.80 GB • 10 👤\n🇫🇷 VF\n⚡ Prowlarr",
             _size: 800 * 1024 * 1024,
             _resolution: "480p",
@@ -793,7 +793,7 @@ test("Server - Public status and Admin API endpoints", async () => {
         const resManifest = await axios.get(`${base}/${userUuid}/manifest.json`);
         assert.equal(resManifest.status, 200);
         assert.ok(resManifest.data.name.includes(uniquePseudo), "Le nom de l'addon doit inclure le pseudo");
-        assert.ok(resManifest.data.description.includes("AllDebrid haute performance"), "Description officielle présente");
+        assert.ok(resManifest.data.description.includes("haute performance"), "Description officielle présente");
 
     } finally {
         server.close();
@@ -903,7 +903,7 @@ test("Helpers - formatAioStream handles isInstant with ⚡ and ⏳ badges", () =
     const instantStream = formatAioStream({
         filename: "Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv",
         sizeBytes: 4500000000,
-        provider: "CinéCloud",
+        provider: "Cinécloud",
         indexer: "Prowlarr",
         isInstant: true,
         url: "http://example.com/stream"
@@ -916,7 +916,7 @@ test("Helpers - formatAioStream handles isInstant with ⚡ and ⏳ badges", () =
     const downloadStream = formatAioStream({
         filename: "Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv",
         sizeBytes: 4500000000,
-        provider: "CinéCloud",
+        provider: "Cinécloud",
         indexer: "Prowlarr",
         subtitle: "Téléchargement (42 seeders)",
         isInstant: false,
@@ -1300,7 +1300,7 @@ test("Helpers - formatAioStream source and status lines structure", () => {
     });
     assert.ok(prowlarrStream.name.startsWith("[AD ⚡]"), "Colonne de gauche épurée avec badge");
     assert.ok(prowlarrStream.name.includes("1080p"), "Colonne de gauche inclut la résolution");
-    assert.ok(!prowlarrStream.name.includes("CinéCloud"), "Ne doit plus inclure de nom de provider superflu à gauche");
+    assert.ok(!prowlarrStream.name.includes("Cinécloud"), "Ne doit plus inclure de nom de provider superflu à gauche");
     assert.ok(prowlarrStream.title.includes("🔍 Prowlarr (YggTorrent)"), "Ligne de source Prowlarr");
     assert.ok(prowlarrStream.title.includes("⚡ Instantané AllDebrid"), "Ligne de statut instantané AD");
 
