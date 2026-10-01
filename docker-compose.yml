@@ -53,6 +53,9 @@ services:
     depends_on:
       warp:
         condition: service_healthy
+    extra_hosts:
+      # Permet de joindre Prowlarr sur la machine hôte via http://host.docker.internal:9696
+      - "host.docker.internal:host-gateway"
     volumes:
       - nuvio-data:/app/data
 
@@ -70,3 +73,15 @@ volumes:
     name: nuvio-alldebrid-data
   nuvio-warp:
     name: nuvio-alldebrid-warp
+
+# Pour connecter nuvio au même réseau Docker que votre Prowlarr existant :
+# 1. Dans le service 'nuvio' ci-dessus, ajoutez :
+#      networks:
+#        - default
+#        - prowlarr_net
+# 2. Décommentez le bloc suivant :
+# networks:
+#   default:
+#   prowlarr_net:
+#     external: true
+#     name: nom_du_reseau_de_votre_prowlarr

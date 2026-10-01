@@ -172,3 +172,36 @@ Si vous préférez exécuter l'application directement avec Node.js :
 - **Dépendances de production :** Seules les dépendances nécessaires au fonctionnement en production (`--omit=dev`) sont installées.
 - **Healthcheck intégré :** Contrôle régulier de la santé des conteneurs via requêtes locales.
 - **Isolation réseau :** Exclusion des fichiers sensibles (`.env`, logs) via `.dockerignore`.
+
+---
+
+## 🔌 Guide de Connexion Prowlarr dans Docker
+
+Si votre instance Prowlarr tourne sur la même machine dans un conteneur Docker ou sur l'hôte, voici comment la configurer pour éviter les erreurs de réseau ou de timeout :
+
+### Option 1 : Via la passerelle hôte (Recommandé - Sans modifier Prowlarr)
+Grâce à `extra_hosts: ["host.docker.internal:host-gateway"]` configuré dans `docker-compose.yml`, le conteneur peut joindre directement les ports publiés sur votre machine hôte :
+* **URL Prowlarr :** `http://host.docker.internal:9696` *(ou `http://host.docker.internal:9696/prowlarr` si vous avez configuré un sous-chemin d'URL)*.
+
+### Option 2 : Via un réseau Docker partagé
+Si votre Prowlarr est dans une autre stack Docker (ex: `medias_default` ou `proxy_net`), rattachez `nuvio` au même réseau Docker :
+```yaml
+# Dans docker-compose.yml sous le service 'nuvio' :
+    networks:
+      - default
+      - medias_net
+
+# À la racine de docker-compose.yml :
+networks:
+  default:
+  medias_net:
+    external: true
+    name: nom_du_reseau_prowlarr
+```
+* **URL Prowlarr :** `http://prowlarr:9696` *(ou `http://prowlarr:9696/prowlarr`)*.
+
+### Option 3 : Via l'adresse IP locale de votre machine
+Si Prowlarr est accessible sur votre réseau local :
+* **URL Prowlarr :** `http://192.168.1.50:9696` *(remplacez par l'IP LAN de votre serveur)*.
+
+> ⚠️ **Note sur les adresses IP `172.x.x.x` :** N'utilisez pas directement l'adresse IP interne d'un conteneur (`172.x.x.x`), car Docker bloque par défaut le routage direct entre réseaux bridge isolés (provoquant un timeout de connexion).

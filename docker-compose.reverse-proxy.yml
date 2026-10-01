@@ -48,6 +48,9 @@ services:
     depends_on:
       warp:
         condition: service_healthy
+    extra_hosts:
+      # Permet de joindre Prowlarr sur la machine hôte via http://host.docker.internal:9696
+      - "host.docker.internal:host-gateway"
     volumes:
       - nuvio-data:/app/data
 

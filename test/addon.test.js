@@ -927,5 +927,71 @@ test("Helpers - formatAioStream handles isInstant with ⚡ and ⏳ badges", () =
     assert.ok(downloadStream.title.includes("⏳ Téléchargement (42 seeders)"), "Doit préfixer avec ⏳");
 });
 
+test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagnosis", async () => {
+    const http = require("http");
+    const { checkProwlarrConnectivity } = require("../lib/prowlarr-worker");
+
+    // 1. Validation des paramètres requis
+    const emptyRes = await checkProwlarrConnectivity("", "");
+    assert.equal(emptyRes.success, false);
+    assert.equal(emptyRes.valid, false);
+
+    // 2. Diagnostic d'hôte introuvable
+    const notFoundRes = await checkProwlarrConnectivity("http://prowlarr-inexistant-test:9696", "test_key");
+    assert.equal(notFoundRes.success, false);
+    assert.ok(notFoundRes.error.includes("Hôte 'prowlarr-inexistant-test' introuvable"), "Doit diagnostiquer l'hôte introuvable");
+    assert.ok(notFoundRes.error.includes("host.docker.internal"), "Doit suggérer host.docker.internal");
+
+    // 3. Mock HTTP server pour simuler Prowlarr
+    let mode = "root"; // "root" ou "subpath"
+    const server = http.createServer((req, res) => {
+        const apiKey = req.headers["x-api-key"] || new URL(req.url, "http://localhost").searchParams.get("apikey");
+        if (apiKey !== "valid_key") {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify({ error: "Unauthorized" }));
+        }
+
+        if (mode === "root" && req.url.startsWith("/api/v1/system/status")) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify({ version: "1.25.0", appName: "Prowlarr", instanceName: "Prowlarr" }));
+        }
+
+        if (mode === "subpath" && req.url.startsWith("/prowlarr/api/v1/system/status")) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify({ version: "1.25.0", appName: "Prowlarr", instanceName: "Prowlarr" }));
+        }
+
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Not Found" }));
+    });
+
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    try {
+        // Test 3a : Instance standard à la racine
+        mode = "root";
+        const rootRes = await checkProwlarrConnectivity(baseUrl, "valid_key");
+        assert.equal(rootRes.success, true);
+        assert.equal(rootRes.valid, true);
+        assert.equal(rootRes.version, "1.25.0");
+
+        // Test 3b : Instance sous sous-chemin /prowlarr alors que l'utilisateur a saisi l'URL racine
+        mode = "subpath";
+        const subpathRes = await checkProwlarrConnectivity(baseUrl, "valid_key");
+        assert.equal(subpathRes.success, true);
+        assert.equal(subpathRes.valid, true);
+        assert.equal(subpathRes.suggestedUrl, `${baseUrl}/prowlarr`, "Doit suggérer l'URL corrigée avec /prowlarr");
+
+        // Test 3c : Clé invalide (HTTP 401)
+        const unauthRes = await checkProwlarrConnectivity(baseUrl, "wrong_key");
+        assert.equal(unauthRes.success, false);
+        assert.ok(unauthRes.error.includes("401"), "Doit diagnostiquer l'erreur 401");
+    } finally {
+        server.close();
+    }
+});
+
 
 
