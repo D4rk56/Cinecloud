@@ -896,5 +896,36 @@ test("UI - Client script in renderConfigPage and renderAdminPage compiles withou
     }, "Le script client de renderAdminPage doit compiler sans aucune erreur de syntaxe");
 });
 
+test("Helpers - formatAioStream handles isInstant with ⚡ and ⏳ badges", () => {
+    const { formatAioStream } = require("../lib/helpers");
+
+    // Flux instantané (isInstant: true)
+    const instantStream = formatAioStream({
+        filename: "Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv",
+        sizeBytes: 4500000000,
+        provider: "CinéCloud",
+        indexer: "Prowlarr",
+        isInstant: true,
+        url: "http://example.com/stream"
+    });
+    assert.ok(instantStream.name.includes("[AD ⚡]"), "Doit inclure le badge [AD ⚡]");
+    assert.ok(!instantStream.name.includes("[AD ⏳]"), "Ne doit pas inclure [AD ⏳]");
+    assert.ok(instantStream.title.includes("⚡ Instantané AllDebrid"), "Doit inclure le statut instantané");
+
+    // Flux en cours de téléchargement (isInstant: false)
+    const downloadStream = formatAioStream({
+        filename: "Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv",
+        sizeBytes: 4500000000,
+        provider: "CinéCloud",
+        indexer: "Prowlarr",
+        subtitle: "Téléchargement (42 seeders)",
+        isInstant: false,
+        url: "http://example.com/stream"
+    });
+    assert.ok(downloadStream.name.includes("[AD ⏳]"), "Doit inclure le badge [AD ⏳]");
+    assert.ok(!downloadStream.name.includes("[AD ⚡]"), "Ne doit pas inclure [AD ⚡]");
+    assert.ok(downloadStream.title.includes("⏳ Téléchargement (42 seeders)"), "Doit préfixer avec ⏳");
+});
+
 
 

@@ -176,7 +176,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
         startProwlarrWorker();
 
         return runWithUser({ uuid, pseudo: configData.pseudo || "Utilisateur" }, () => {
-            console.log(`[User] Nouvel addon créé avec succès : UUID ${uuid}${configData.pseudo ? ` (${configData.pseudo})` : ""} [Prowlarr: ${configData.prowlarrMode}]`);
+            console.log(`[User] Nouveau manifest créé avec succès : UUID ${uuid}${configData.pseudo ? ` (${configData.pseudo})` : ""} [Prowlarr: ${configData.prowlarrMode}]`);
             return res.json({
                 success: true,
                 uuid,
@@ -186,7 +186,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
         });
     } catch (err) {
         console.error("[User] Erreur lors de l'enregistrement :", err.message);
-        return res.status(500).json({ error: "Erreur serveur lors de la création de l'addon." });
+        return res.status(500).json({ error: "Erreur serveur lors de la création du manifest." });
     }
 });
 
