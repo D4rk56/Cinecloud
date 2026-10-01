@@ -993,5 +993,105 @@ test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagn
     }
 });
 
+test("Logger - formats user objects cleanly without [object Object]", () => {
+    const { addLog, getLogs, runWithUser } = require("../lib/logger");
+    const testUserObj = { uuid: "98765432-abcd-1234-ef00-567890abcdef", pseudo: "SuperUser" };
+
+    runWithUser(testUserObj, () => {
+        addLog("INFO", "TestMod", "Message from user");
+    });
+
+    const logs = getLogs({ limit: 10, search: "Message from user" });
+    assert.ok(logs.length > 0, "Doit enregistrer le log");
+    const lastLog = logs[logs.length - 1];
+    assert.ok(!lastLog.user.includes("[object Object]"), "Ne doit JAMAIS contenir [object Object]");
+    assert.ok(lastLog.user.includes("SuperUser"), "Doit contenir le pseudo SuperUser");
+    assert.ok(lastLog.user.includes("98765432"), "Doit contenir l'UUID tronqué");
+});
+
+test("Database - records and retrieves top search rankings", () => {
+    const { recordSearchQuery, getTopSearches, clearSearchQueries } = require("../lib/db");
+    clearSearchQueries();
+
+    recordSearchQuery("tt15239678", "Dune: Part Two", "movie");
+    recordSearchQuery("tt15239678", "Dune: Part Two", "movie");
+    recordSearchQuery("tt15239678", "Dune: Part Two", "movie");
+
+    recordSearchQuery("tt0903747", "Breaking Bad", "series");
+    recordSearchQuery("tt0903747", "Breaking Bad", "series");
+
+    recordSearchQuery("kitsu:1234", "Attack on Titan", "anime");
+
+    const top = getTopSearches(5);
+    assert.ok(top.length >= 3, "Doit contenir au moins 3 recherches");
+    assert.equal(top[0].id, "tt15239678", "Le plus recherché doit être en premier");
+    assert.equal(top[0].title, "Dune: Part Two");
+    assert.equal(top[0].count, 3);
+    assert.equal(top[1].id, "tt0903747");
+    assert.equal(top[1].count, 2);
+    assert.equal(top[2].id, "kitsu:1234");
+    assert.equal(top[2].count, 1);
+});
+
+test("Database - getAllUsersAdmin sorting works across newest, oldest, alpha and last_active", () => {
+    const { createUser, deleteUser, getAllUsersAdmin } = require("../lib/db");
+    const u1 = "11111111-0000-0000-0000-000000000001";
+    const u2 = "22222222-0000-0000-0000-000000000002";
+
+    try {
+        createUser(u1, "hash1", "enc1", "Zorro", "local");
+        createUser(u2, "hash2", "enc2", "Alain", "shared");
+
+        const byAlpha = getAllUsersAdmin("alpha");
+        assert.ok(byAlpha.length >= 2);
+        const alainIdx = byAlpha.findIndex(u => u.pseudo === "Alain");
+        const zorroIdx = byAlpha.findIndex(u => u.pseudo === "Zorro");
+        assert.ok(alainIdx !== -1 && zorroIdx !== -1);
+        assert.ok(alainIdx < zorroIdx, "Alain doit précéder Zorro en ordre alphabétique");
+
+        const byNewest = getAllUsersAdmin("newest");
+        assert.ok(byNewest.length >= 2);
+    } finally {
+        deleteUser(u1);
+        deleteUser(u2);
+    }
+});
+
+test("Helpers - formatAioStream supports precache, global and torrentio badges", () => {
+    const { formatAioStream } = require("../lib/helpers");
+
+    const precache = formatAioStream({
+        filename: "Dune.Part.Two.2024.1080p.mkv",
+        cacheType: "precache",
+        isInstant: true
+    });
+    assert.ok(precache.name.includes("[AD ⚡ Pré-cache]"), "Badge pré-cache");
+    assert.ok(precache.title.includes("⚡ Pré-cache RSS • AllDebrid"));
+
+    const globalCache = formatAioStream({
+        filename: "Breaking.Bad.S01E01.1080p.mkv",
+        cacheType: "global",
+        isInstant: true
+    });
+    assert.ok(globalCache.name.includes("[AD ⚡ Cache Global]"), "Badge cache global");
+    assert.ok(globalCache.title.includes("⚡ Cache Global (Mutualisé)"));
+
+    const direct = formatAioStream({
+        filename: "Solo.Leveling.S01E01.1080p.mkv",
+        cacheType: "direct",
+        isInstant: true
+    });
+    assert.ok(direct.name.includes("[AD ⚡ Direct]"), "Badge direct");
+    assert.ok(direct.title.includes("⚡ Recherche Prowlarr Directe"));
+
+    const torrentio = formatAioStream({
+        filename: "Inception.2010.1080p.mkv",
+        cacheType: "torrentio",
+        isInstant: true
+    });
+    assert.ok(torrentio.name.includes("[AD ⚡ Torrentio]"), "Badge Torrentio");
+    assert.ok(torrentio.title.includes("⚡ Instantané Torrentio • AllDebrid"));
+});
+
 
 

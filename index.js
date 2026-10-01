@@ -29,7 +29,9 @@ const {
     getSystemSettings,
     updateSystemSettings,
     clearCachedTorrents,
-    clearMoviesCache
+    clearMoviesCache,
+    getTopSearches,
+    clearSearchQueries
 } = require("./lib/db");
 
 const { hashPassword, verifyPassword, encryptConfig, decryptConfig } = require("./lib/crypto");
@@ -160,6 +162,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: Boolean(allowDownload),
             disableCatalogs: Boolean(disableCatalogs),
+            torrentioUrl: (req.body.torrentioUrl && req.body.torrentioUrl.trim()) || "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy",
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : ALL_CATALOGS.map(c => c.id))
         };
 
@@ -222,6 +225,7 @@ app.post("/api/user/login", authLimiter, (req, res) => {
                 prowlarrMode: user.prowlarrMode || config.prowlarrMode || "local",
                 allowDownload: Boolean(config.allowDownload),
                 disableCatalogs: Boolean(config.disableCatalogs),
+                torrentioUrl: config.torrentioUrl || "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy",
                 maxSizeGb: config.maxSizeGb !== undefined ? config.maxSizeGb : 150,
                 apiKeyPreview: config.apiKey ? `${config.apiKey.slice(0, 4)}...${config.apiKey.slice(-4)}` : ""
             }
@@ -286,6 +290,7 @@ app.post("/api/user/update", authLimiter, (req, res) => {
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: allowDownload !== undefined ? Boolean(allowDownload) : Boolean(currentConfig.allowDownload),
             disableCatalogs: disableCatalogs !== undefined ? Boolean(disableCatalogs) : Boolean(currentConfig.disableCatalogs),
+            torrentioUrl: req.body.torrentioUrl !== undefined ? (req.body.torrentioUrl.trim() || "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy") : (currentConfig.torrentioUrl || "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy"),
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : currentConfig.enabledCatalogs)
         };
 
@@ -379,6 +384,7 @@ app.get("/api/admin/stats", requireAdmin, (req, res) => {
     const warp = getWarpStatus();
     res.json({
         ...stats,
+        topSearches: getTopSearches(15),
         warp,
         nodeVersion: process.version,
         memoryRssMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
@@ -387,7 +393,8 @@ app.get("/api/admin/stats", requireAdmin, (req, res) => {
 });
 
 app.get("/api/admin/users", requireAdmin, (req, res) => {
-    res.json(getAllUsersAdmin());
+    const sortBy = req.query.sortBy || "newest";
+    res.json(getAllUsersAdmin(sortBy));
 });
 
 app.delete("/api/admin/users/:uuid", requireAdmin, (req, res) => {
@@ -422,6 +429,9 @@ app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
     }
     if (target === "movies" || target === "all") {
         cleared += clearMoviesCache();
+    }
+    if (target === "searches" || target === "all") {
+        cleared += clearSearchQueries();
     }
     res.json({ success: true, cleared });
 });
