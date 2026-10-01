@@ -8,7 +8,8 @@ const rateLimit = require("express-rate-limit");
 const {
     initConsoleInterceptors,
     getLogs,
-    clearLogs
+    clearLogs,
+    runWithUser
 } = require("./lib/logger");
 
 // Interception des logs console pour le terminal en direct du panneau d'administration
@@ -124,6 +125,9 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             maxStreams,
             prowlarrUrl,
             prowlarrKey,
+            prowlarrMode,
+            allowDownload,
+            disableCatalogs,
             enabledCatalogs
         } = req.body;
 
@@ -136,6 +140,10 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
 
         const uuid = crypto.randomUUID();
         const passwordHash = hashPassword(password);
+        const resolvedProwlarrMode = (prowlarrMode === "shared" || prowlarrMode === "private" || prowlarrMode === "local")
+            ? prowlarrMode
+            : ((prowlarrKey && prowlarrKey.trim() && prowlarrKey !== "off") ? "shared" : "local");
+
         const configData = {
             apiKey: apiKey.trim(),
             pseudo: (pseudo && pseudo.trim()) || "",
@@ -145,15 +153,18 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             resolutions: resolutions || "4k,1080p,720p,480p",
             hideUnknownLanguages: Boolean(hideUnknownLanguages),
             sortBy: sortBy === "size" || sortBy === "size_asc" ? sortBy : "quality",
-            maxSizeGb: Number(maxSizeGb) || 0,
+            maxSizeGb: (maxSizeGb !== undefined && maxSizeGb !== null && maxSizeGb !== "") ? Number(maxSizeGb) : 150,
             maxStreams: Number(maxStreams) || 0,
             prowlarrUrl: (prowlarrUrl && prowlarrUrl.trim()) || "http://prowlarr:9696",
             prowlarrKey: (prowlarrKey && prowlarrKey.trim()) || "off",
+            prowlarrMode: resolvedProwlarrMode,
+            allowDownload: Boolean(allowDownload),
+            disableCatalogs: Boolean(disableCatalogs),
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : ALL_CATALOGS.map(c => c.id))
         };
 
         const configEncrypted = encryptConfig(configData);
-        createUser(uuid, passwordHash, configEncrypted, configData.pseudo);
+        createUser(uuid, passwordHash, configEncrypted, configData.pseudo, configData.prowlarrMode);
 
         const protocol = getRequestProtocol(req);
         const host = req.get("host");
@@ -164,12 +175,14 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
         stopProwlarrWorker();
         startProwlarrWorker();
 
-        console.log(`[User] Nouvel addon créé avec succès : UUID ${uuid}${configData.pseudo ? ` (${configData.pseudo})` : ""}`);
-        return res.json({
-            success: true,
-            uuid,
-            manifestUrl,
-            stremioUrl
+        return runWithUser({ uuid, pseudo: configData.pseudo || "Utilisateur" }, () => {
+            console.log(`[User] Nouvel addon créé avec succès : UUID ${uuid}${configData.pseudo ? ` (${configData.pseudo})` : ""} [Prowlarr: ${configData.prowlarrMode}]`);
+            return res.json({
+                success: true,
+                uuid,
+                manifestUrl,
+                stremioUrl
+            });
         });
     } catch (err) {
         console.error("[User] Erreur lors de l'enregistrement :", err.message);
@@ -205,6 +218,11 @@ app.post("/api/user/login", authLimiter, (req, res) => {
                 ...config,
                 pseudo: user.pseudo || config.pseudo || "",
                 prowlarrUrl: config.prowlarrUrl || "http://prowlarr:9696",
+                prowlarrKey: config.prowlarrKey || "",
+                prowlarrMode: user.prowlarrMode || config.prowlarrMode || "local",
+                allowDownload: Boolean(config.allowDownload),
+                disableCatalogs: Boolean(config.disableCatalogs),
+                maxSizeGb: config.maxSizeGb !== undefined ? config.maxSizeGb : 150,
                 apiKeyPreview: config.apiKey ? `${config.apiKey.slice(0, 4)}...${config.apiKey.slice(-4)}` : ""
             }
         });
@@ -232,6 +250,9 @@ app.post("/api/user/update", authLimiter, (req, res) => {
             maxStreams,
             prowlarrUrl,
             prowlarrKey,
+            prowlarrMode,
+            allowDownload,
+            disableCatalogs,
             enabledCatalogs
         } = req.body;
 
@@ -245,6 +266,10 @@ app.post("/api/user/update", authLimiter, (req, res) => {
         }
 
         const currentConfig = decryptConfig(user.configEncrypted);
+        const resolvedProwlarrMode = (prowlarrMode === "shared" || prowlarrMode === "private" || prowlarrMode === "local")
+            ? prowlarrMode
+            : (currentConfig.prowlarrMode || user.prowlarrMode || "local");
+
         const updatedConfig = {
             apiKey: (apiKey && apiKey.trim()) || currentConfig.apiKey,
             pseudo: pseudo !== undefined ? pseudo.trim() : (user.pseudo || currentConfig.pseudo || ""),
@@ -254,14 +279,17 @@ app.post("/api/user/update", authLimiter, (req, res) => {
             resolutions: resolutions !== undefined ? resolutions : (currentConfig.resolutions || "4k,1080p,720p,480p"),
             hideUnknownLanguages: hideUnknownLanguages !== undefined ? Boolean(hideUnknownLanguages) : Boolean(currentConfig.hideUnknownLanguages),
             sortBy: sortBy !== undefined ? sortBy : (currentConfig.sortBy || "quality"),
-            maxSizeGb: maxSizeGb !== undefined ? (Number(maxSizeGb) || 0) : (currentConfig.maxSizeGb || 0),
+            maxSizeGb: maxSizeGb !== undefined ? (Number(maxSizeGb) || 0) : (currentConfig.maxSizeGb !== undefined ? currentConfig.maxSizeGb : 150),
             maxStreams: maxStreams !== undefined ? (Number(maxStreams) || 0) : (currentConfig.maxStreams || 0),
             prowlarrUrl: (prowlarrUrl && prowlarrUrl.trim()) || currentConfig.prowlarrUrl || "http://prowlarr:9696",
             prowlarrKey: prowlarrKey !== undefined ? prowlarrKey.trim() : currentConfig.prowlarrKey,
+            prowlarrMode: resolvedProwlarrMode,
+            allowDownload: allowDownload !== undefined ? Boolean(allowDownload) : Boolean(currentConfig.allowDownload),
+            disableCatalogs: disableCatalogs !== undefined ? Boolean(disableCatalogs) : Boolean(currentConfig.disableCatalogs),
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : currentConfig.enabledCatalogs)
         };
 
-        updateUserConfig(uuid.trim(), encryptConfig(updatedConfig), updatedConfig.pseudo);
+        updateUserConfig(uuid.trim(), encryptConfig(updatedConfig), updatedConfig.pseudo, updatedConfig.prowlarrMode);
 
         if (newPassword && typeof newPassword === "string" && newPassword.length >= 4) {
             updateUserPassword(uuid.trim(), hashPassword(newPassword));
@@ -271,11 +299,20 @@ app.post("/api/user/update", authLimiter, (req, res) => {
         stopProwlarrWorker();
         startProwlarrWorker();
 
-        console.log(`[User] Configuration mise à jour pour l'UUID ${uuid}`);
-        return res.json({ success: true, message: "Réglages mis à jour avec succès !" });
+        return runWithUser({ uuid: user.uuid, pseudo: updatedConfig.pseudo || "Utilisateur" }, () => {
+            console.log(`[User] Configuration mise à jour pour l'UUID ${uuid} [Prowlarr: ${updatedConfig.prowlarrMode}]`);
+            return res.json({ success: true, message: "Réglages mis à jour avec succès !" });
+        });
     } catch (err) {
         return res.status(500).json({ error: "Erreur lors de la mise à jour des réglages." });
     }
+});
+
+app.post("/api/check/prowlarr", async (req, res) => {
+    const { prowlarrUrl, prowlarrKey } = req.body;
+    const { checkProwlarrConnectivity } = require("./lib/prowlarr-worker");
+    const result = await checkProwlarrConnectivity(prowlarrUrl, prowlarrKey);
+    res.json(result);
 });
 
 // Suppression de configuration / Compte utilisateur
@@ -392,11 +429,27 @@ app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
 // =============================================================================
 // 4. ENDPOINT DE RÉSOLUTION LAZY (VALIDATION & FAILOVER INSTANTANÉ)
 // =============================================================================
-app.get("/resolve/:userRef/:imdbId/:fileRef(*)", handleResolve);
+app.get("/resolve/:userRef/:imdbId/:fileRef(*)", (req, res) => {
+    const userRef = req.params.userRef;
+    const user = (userRef && userRef.length === 36 && userRef.includes("-")) ? getUserByUuid(userRef) : null;
+    const tag = user ? { uuid: user.uuid, pseudo: user.pseudo || "Utilisateur" } : { uuid: userRef, pseudo: "Client" };
+    return runWithUser(tag, () => handleResolve(req, res));
+});
 
 // =============================================================================
 // 5. ROUTES STREMIO SÉCURISÉES (FORMAT MODERNE /:uuid/*)
 // =============================================================================
+
+// Middleware pour contextualiser les logs Stremio avec l'identité de l'utilisateur
+app.use("/:uuid", (req, res, next) => {
+    const uuid = req.params.uuid;
+    if (uuid && uuid.length === 36 && uuid.includes("-")) {
+        const user = getUserByUuid(uuid);
+        const tag = user ? { uuid: user.uuid, pseudo: user.pseudo || "Utilisateur" } : { uuid, pseudo: "Inconnu" };
+        return runWithUser(tag, () => next());
+    }
+    next();
+});
 
 app.get("/:uuid/manifest.json", (req, res) => {
     const config = getUserConfig(req.params.uuid);

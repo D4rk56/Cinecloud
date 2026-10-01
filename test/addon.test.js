@@ -23,15 +23,31 @@ const {
 } = require("../lib/resolver");
 
 const {
-    handleManifest
+    handleManifest,
+    handleCatalog
 } = require("../lib/stremio");
 
 const {
     upsertCachedTorrent,
     getCachedTorrentsByImdb,
     deleteCachedTorrent,
-    purgeOldCachedTorrents
+    purgeOldCachedTorrents,
+    createUser,
+    getSharedProwlarrInstances
 } = require("../lib/db");
+
+const {
+    isLocalOrPrivateUrl
+} = require("../lib/prowlarr-worker");
+
+const {
+    logger,
+    runWithUser
+} = require("../lib/logger");
+
+const {
+    filterAndSortStreams
+} = require("../lib/helpers");
 
 test("Helpers - parseSeasonEpisode handles various delimiters", () => {
     assert.deepEqual(parseSeasonEpisode("Breaking.Bad.S01E05.mkv"), { season: 1, episode: 5 });
@@ -777,5 +793,86 @@ test("Server - Public status and Admin API endpoints", async () => {
         server.close();
     }
 });
+
+test("Crowdsourcing & Prowlarr Modes - getSharedProwlarrInstances & URL validation", () => {
+    // 1. Validation des URLs locales vs distantes
+    assert.equal(isLocalOrPrivateUrl("http://localhost:9696"), true);
+    assert.equal(isLocalOrPrivateUrl("http://127.0.0.1:9696"), true);
+    assert.equal(isLocalOrPrivateUrl("http://192.168.1.100:9696"), true);
+    assert.equal(isLocalOrPrivateUrl("http://10.0.0.12:9696"), true);
+    assert.equal(isLocalOrPrivateUrl("https://prowlarr.mydomain.com"), false);
+    assert.equal(isLocalOrPrivateUrl("invalid-url"), true);
+
+    // 2. Création d'utilisateurs avec différents modes Prowlarr
+    const sharedUuid = "user-shared-" + Date.now();
+    const encShared = encryptConfig({ prowlarrUrl: "https://prowlarr.shared.net", prowlarrKey: "key-shared" });
+    createUser(sharedUuid, "hash", encShared, "SharedUser", "shared");
+
+    const privateUuid = "user-private-" + Date.now();
+    const encPrivate = encryptConfig({ prowlarrUrl: "https://prowlarr.private.net", prowlarrKey: "key-private" });
+    createUser(privateUuid, "hash", encPrivate, "PrivateUser", "private");
+
+    const localUuid = "user-local-" + Date.now();
+    const encLocal = encryptConfig({ prowlarrUrl: "", prowlarrKey: "" });
+    createUser(localUuid, "hash", encLocal, "LocalUser", "local");
+
+    const sharedInstances = getSharedProwlarrInstances();
+    const hasShared = sharedInstances.some(inst => inst.url === "https://prowlarr.shared.net" && inst.key === "key-shared");
+    const hasPrivate = sharedInstances.some(inst => inst.url === "https://prowlarr.private.net");
+    const hasLocal = sharedInstances.some(inst => inst.userUuid === localUuid);
+
+    assert.ok(hasShared, "L'instance en mode 'shared' doit être incluse dans le crowdsourcing");
+    assert.ok(!hasPrivate, "L'instance en mode 'private' NE doit PAS être partagée pour le RSS");
+    assert.ok(!hasLocal, "L'instance en mode 'local' n'a pas de serveur Prowlarr");
+});
+
+test("Catalogs - disableCatalogs hides catalogs from manifest and catalog route", async () => {
+    // 1. Manifest sans catalogue quand disableCatalogs est actif
+    const manifestDisabled = handleManifest({ disableCatalogs: true, pseudo: "NoCatalogs" });
+    assert.equal(manifestDisabled.catalogs.length, 0, "Les catalogues doivent être complètement vides dans le manifest");
+
+    // 2. Manifest normal quand disableCatalogs est inactif
+    const manifestEnabled = handleManifest({ disableCatalogs: false, pseudo: "WithCatalogs" });
+    assert.ok(manifestEnabled.catalogs.length > 0, "Les catalogues doivent être présents par défaut");
+
+    // 3. Appel de handleCatalog avec disableCatalogs actif
+    const catalogResult = await handleCatalog({ disableCatalogs: true }, "movie", "my_ad_magnets");
+    assert.deepEqual(catalogResult, { metas: [] }, "Doit retourner une liste de métadonnées vide");
+});
+
+test("Stream Filtering - default 150GB limit and sorting", () => {
+    const stream120Gb = {
+        title: "Dune.Part.Two.2024.2160p.UHD.Remux.mkv\n💾 120.0 GB\n⚙️ Video",
+        url: "http://stream1",
+        behaviorHints: { filename: "Dune.Part.Two.2024.2160p.UHD.Remux.mkv" }
+    };
+    const stream180Gb = {
+        title: "Dune.Part.Two.2024.2160p.UHD.Huge.mkv\n💾 180.0 GB\n⚙️ Video",
+        url: "http://stream2",
+        behaviorHints: { filename: "Dune.Part.Two.2024.2160p.UHD.Huge.mkv" }
+    };
+
+    // Par défaut, la limite est 150 Go
+    const defaultFiltered = filterAndSortStreams([stream120Gb, stream180Gb], {});
+    assert.equal(defaultFiltered.length, 1, "Le flux de 180 Go doit être filtré avec la limite par défaut de 150 Go");
+    assert.ok(defaultFiltered[0].title.includes("120.0 GB"));
+
+    // Avec une limite personnalisée à 200 Go
+    const customFiltered = filterAndSortStreams([stream120Gb, stream180Gb], { maxSizeGb: 200 });
+    assert.equal(customFiltered.length, 2, "Les deux flux doivent passer avec une limite de 200 Go");
+});
+
+test("Logger - AsyncLocalStorage tags log lines with user", () => {
+    const testUser = "Alex_Tester_" + Date.now();
+    runWithUser(testUser, () => {
+        logger.info("Message balisé avec le contexte utilisateur");
+    });
+
+    const logs = logger.getLogs({ limit: 10 });
+    const targetLog = logs.find(l => l.message === "Message balisé avec le contexte utilisateur");
+    assert.ok(targetLog, "Le log doit être présent dans le buffer");
+    assert.equal(targetLog.user, testUser, "Le tag user doit correspondre au contexte AsyncLocalStorage");
+});
+
 
 
