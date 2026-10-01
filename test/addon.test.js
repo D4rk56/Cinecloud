@@ -49,6 +49,12 @@ const {
     filterAndSortStreams
 } = require("../lib/helpers");
 
+const vm = require("node:vm");
+const {
+    renderConfigPage,
+    renderAdminPage
+} = require("../lib/ui");
+
 test("Helpers - parseSeasonEpisode handles various delimiters", () => {
     assert.deepEqual(parseSeasonEpisode("Breaking.Bad.S01E05.mkv"), { season: 1, episode: 5 });
     assert.deepEqual(parseSeasonEpisode("Breaking.Bad.S01.E05.mkv"), { season: 1, episode: 5 });
@@ -872,6 +878,22 @@ test("Logger - AsyncLocalStorage tags log lines with user", () => {
     const targetLog = logs.find(l => l.message === "Message balisé avec le contexte utilisateur");
     assert.ok(targetLog, "Le log doit être présent dans le buffer");
     assert.equal(targetLog.user, testUser, "Le tag user doit correspondre au contexte AsyncLocalStorage");
+});
+
+test("UI - Client script in renderConfigPage and renderAdminPage compiles without syntax error", () => {
+    // 1. Validation de renderConfigPage
+    const configHtml = renderConfigPage();
+    const configScript = configHtml.substring(configHtml.indexOf("<script>") + 8, configHtml.lastIndexOf("</script>"));
+    assert.doesNotThrow(() => {
+        new vm.Script(configScript);
+    }, "Le script client de renderConfigPage doit compiler sans aucune erreur de syntaxe");
+
+    // 2. Validation de renderAdminPage
+    const adminHtml = renderAdminPage();
+    const adminScript = adminHtml.substring(adminHtml.indexOf("<script>") + 8, adminHtml.lastIndexOf("</script>"));
+    assert.doesNotThrow(() => {
+        new vm.Script(adminScript);
+    }, "Le script client de renderAdminPage doit compiler sans aucune erreur de syntaxe");
 });
 
 
