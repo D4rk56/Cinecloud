@@ -27,9 +27,8 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Installation de libstdc++ (requis par les extensions C++ compilées sur Alpine musl)
-# et préparation du répertoire de données persistant
-RUN apk add --no-cache libstdc++ \
+# Installation de libstdc++ et su-exec (pour gestion des accès et permissions du volume /app/data)
+RUN apk add --no-cache libstdc++ su-exec \
     && mkdir -p /app/data \
     && chown -R node:node /app
 
@@ -40,8 +39,9 @@ COPY --chown=node:node . .
 # Copie des dépendances de production compilées depuis l'étape builder
 COPY --chown=node:node --from=builder /app/node_modules ./node_modules
 
-# Exécution sous un utilisateur non-root pour des raisons de sécurité
-USER node
+# Configuration du script d'entrée assurant les accès et permissions
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Exposition du port d'écoute HTTP
 EXPOSE 3000
@@ -50,5 +50,6 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget --spider -q http://127.0.0.1:3000/ || exit 1
 
-# Lancement de l'application
+# Script d'entrée pour sécuriser les permissions et lancer l'application
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "index.js"]

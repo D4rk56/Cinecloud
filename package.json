@@ -3,6 +3,11 @@
   "version": "2.4.0",
   "description": "Cinécloud - Addon de streaming haute performance pour Stremio et Nuvio avec AllDebrid, Torbox et Prowlarr",
   "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D4rk56/Cinecloud.git"
+  },
+  "homepage": "https://github.com/D4rk56/Cinecloud#readme",
   "scripts": {
     "start": "node --experimental-sqlite index.js",
     "test": "node --test"

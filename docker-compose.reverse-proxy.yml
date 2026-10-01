@@ -28,7 +28,7 @@ services:
           - nuvio-warp
 
   cinecloud:
-    image: ghcr.io/d4rk56/nuvio-alldebrid:latest
+    image: ghcr.io/d4rk56/cinecloud:latest
     build: .
     container_name: cinecloud
     restart: unless-stopped

@@ -1,6 +1,6 @@
 # ☁️🎬 Cinécloud
 
-[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fd4rk56%2Fnuvio--alldebrid-blue?logo=docker)](https://github.com/D4rk56/nuvio-alldebrid/pkgs/container/nuvio-alldebrid)
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fd4rk56%2Fcinecloud-blue?logo=docker)](https://github.com/D4rk56/Cinecloud/pkgs/container/cinecloud)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen?logo=node.js)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Debrid](https://img.shields.io/badge/debrid-AllDebrid%20%7C%20Torbox-orange)](https://alldebrid.com)
@@ -60,7 +60,7 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
 ## 🚀 Déploiement Rapide avec Docker Compose
 
 L'image officielle est disponible sur **GitHub Container Registry (GHCR)** :
-`ghcr.io/d4rk56/nuvio-alldebrid:latest` *(compatible architectures `linux/amd64` et `linux/arm64`)*.
+`ghcr.io/d4rk56/cinecloud:latest` *(compatible architectures `linux/amd64` et `linux/arm64`)*.
 
 ### Option 1 : Déploiement avec Cloudflare Tunnel & WARP (Recommandé)
 
