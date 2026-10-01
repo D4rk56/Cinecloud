@@ -1057,7 +1057,7 @@ test("Database - getAllUsersAdmin sorting works across newest, oldest, alpha and
     }
 });
 
-test("Helpers - formatAioStream supports precache, global and torrentio badges", () => {
+test("Helpers - formatAioStream supports precache, global and lumio badges", () => {
     const { formatAioStream } = require("../lib/helpers");
 
     const precache = formatAioStream({
@@ -1084,13 +1084,13 @@ test("Helpers - formatAioStream supports precache, global and torrentio badges",
     assert.ok(direct.name.includes("[AD ⚡ Direct]"), "Badge direct");
     assert.ok(direct.title.includes("⚡ Recherche Prowlarr Directe"));
 
-    const torrentio = formatAioStream({
+    const lumio = formatAioStream({
         filename: "Inception.2010.1080p.mkv",
-        cacheType: "torrentio",
+        cacheType: "lumio",
         isInstant: true
     });
-    assert.ok(torrentio.name.includes("[AD ⚡ Torrentio]"), "Badge Torrentio");
-    assert.ok(torrentio.title.includes("⚡ Instantané Torrentio • AllDebrid"));
+    assert.ok(lumio.name.includes("[AD ⚡ Lumio]"), "Badge Lumio");
+    assert.ok(lumio.title.includes("⚡ Instantané Lumio • AllDebrid"));
 });
 
 test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async () => {
@@ -1137,14 +1137,14 @@ test("Torbox - Helpers formatAioStream formats streams with [TB] badges and Torb
     assert.ok(downloading.name.includes("[TB ⏳]"), "Badge Torbox téléchargement");
     assert.ok(downloading.title.includes("⏳ En téléchargement Torbox"));
 
-    const torrentio = formatAioStream({
+    const lumio = formatAioStream({
         filename: "Inception.2010.1080p.mkv",
-        cacheType: "torrentio",
+        cacheType: "lumio",
         isInstant: true,
         debridProvider: "torbox"
     });
-    assert.ok(torrentio.name.includes("[TB ⚡ Torrentio]"), "Badge Torbox Torrentio");
-    assert.ok(torrentio.title.includes("⚡ Instantané Torrentio • Torbox"));
+    assert.ok(lumio.name.includes("[TB ⚡ Lumio]"), "Badge Torbox Lumio");
+    assert.ok(lumio.title.includes("⚡ Instantané Lumio • Torbox"));
 });
 
 test("Torbox - checkInstantTorbox parses object and list mock responses", async () => {
@@ -1208,6 +1208,84 @@ test("Torbox - unlockTorboxFileTarget resolves tb_cloud and handles direct URLs"
 
     const cloudRef = await unlockTorboxFileTarget("key123", "tb_cloud:456:78");
     assert.ok(cloudRef && cloudRef.includes("torrent_id=456") && cloudRef.includes("file_id=78") && cloudRef.includes("token=key123"));
+});
+
+test("Lumio - handleStream queries Lumio on-demand and filters out error cards", async () => {
+    const { handleStream } = require("../lib/stremio");
+    const axios = require("axios");
+    const originalGet = axios.get;
+
+    try {
+        let interceptedEndpoint = null;
+        axios.get = async function(url, config) {
+            if (url && url.includes("/stream/movie/tt1234567.json")) {
+                interceptedEndpoint = url;
+                return {
+                    status: 200,
+                    data: {
+                        streams: [
+                            // 1. Carte d'erreur / sans URL à ignorer
+                            {
+                                name: "🔴 Lumio",
+                                description: "Aucune source trouvée pour ce titre",
+                                externalUrl: "https://mylumio.tv/configure"
+                            },
+                            // 2. Flux valide AllDebrid
+                            {
+                                name: "[AD⚡️] Lumio",
+                                description: "1080p • BluRay • 💾 15,2 Go • 🔎 C411 | DMM\n🎧 HEVC • AC3 5.1\n🗂️ Test.Film.2024.1080p.mkv",
+                                url: "https://mylumio.tv/play/valid123",
+                                behaviorHints: {
+                                    filename: "Test.Film.2024.1080p.mkv",
+                                    videoSize: 15200000000
+                                }
+                            },
+                            // 3. Flux Torbox
+                            {
+                                name: "[TB⚡️] Lumio",
+                                description: "4K • WEB-DL • 💾 25 Go • 🔎 Tr4ker\n🗂️ Test.Film.2024.4K.mkv",
+                                url: "https://mylumio.tv/play/valid456",
+                                behaviorHints: {
+                                    filename: "Test.Film.2024.4K.mkv",
+                                    videoSize: 25000000000
+                                }
+                            }
+                        ]
+                    }
+                };
+            }
+            return originalGet.apply(this, arguments);
+        };
+
+        const config = {
+            apiKey: "dummy_ad_key",
+            debridProvider: "alldebrid",
+            lumioUrl: "https://mylumio.tv/test_token/manifest.json",
+            prowlarrKey: "off"
+        };
+
+        const result = await handleStream(config, "movie", "tt1234567", { movies: {}, series: {} }, "http://localhost:3000", "test-user");
+
+        assert.ok(interceptedEndpoint && interceptedEndpoint.includes("https://mylumio.tv/test_token/stream/movie/tt1234567.json"), "Endpoint Lumio doit être appelé à la demande");
+        assert.ok(result && Array.isArray(result.streams), "Doit renvoyer un tableau de flux");
+
+        // Vérifier que la carte d'erreur '🔴 Lumio' a été éliminée
+        const hasErrorCard = result.streams.some(s => s.name && s.name.includes("🔴"));
+        assert.equal(hasErrorCard, false, "Les cartes d'erreur Lumio ne doivent pas être incluses");
+
+        // Vérifier les badges des flux retournés
+        const adStream = result.streams.find(s => s.url === "https://mylumio.tv/play/valid123");
+        assert.ok(adStream, "Le flux AllDebrid doit être présent");
+        assert.ok(adStream.name.includes("[AD ⚡ Lumio]"), "Badge [AD ⚡ Lumio]");
+        assert.ok(adStream.title.includes("⚡ Instantané Lumio • AllDebrid"));
+
+        const tbStream = result.streams.find(s => s.url === "https://mylumio.tv/play/valid456");
+        assert.ok(tbStream, "Le flux Torbox doit être présent");
+        assert.ok(tbStream.name.includes("[TB ⚡ Lumio]"), "Badge [TB ⚡ Lumio]");
+        assert.ok(tbStream.title.includes("⚡ Instantané Lumio • Torbox"));
+    } finally {
+        axios.get = originalGet;
+    }
 });
 
 

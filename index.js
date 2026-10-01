@@ -50,7 +50,7 @@ function getRequestProtocol(req) {
     return req.protocol || "http";
 }
 
-// En-tête navigateur par défaut pour les requêtes directes (TMDB, Cinemeta, Torrentio)
+// En-tête navigateur par défaut pour les requêtes directes (TMDB, Cinemeta, Lumio)
 axios.defaults.headers.common["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const app = express();
@@ -174,7 +174,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: Boolean(allowDownload),
             disableCatalogs: Boolean(disableCatalogs),
-            torrentioUrl: (req.body.torrentioUrl && req.body.torrentioUrl.trim()) || "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy",
+            lumioUrl: (req.body.lumioUrl && req.body.lumioUrl.trim()) || "",
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : ALL_CATALOGS.map(c => c.id))
         };
 
@@ -240,7 +240,7 @@ app.post("/api/user/login", authLimiter, (req, res) => {
                 prowlarrMode: user.prowlarrMode || config.prowlarrMode || "local",
                 allowDownload: Boolean(config.allowDownload),
                 disableCatalogs: Boolean(config.disableCatalogs),
-                torrentioUrl: config.torrentioUrl || "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy",
+                lumioUrl: config.lumioUrl || "",
                 maxSizeGb: config.maxSizeGb !== undefined ? config.maxSizeGb : 150,
                 apiKeyPreview: config.apiKey ? `${config.apiKey.slice(0, 4)}...${config.apiKey.slice(-4)}` : ""
             }
@@ -313,7 +313,7 @@ app.post("/api/user/update", authLimiter, (req, res) => {
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: allowDownload !== undefined ? Boolean(allowDownload) : Boolean(currentConfig.allowDownload),
             disableCatalogs: disableCatalogs !== undefined ? Boolean(disableCatalogs) : Boolean(currentConfig.disableCatalogs),
-            torrentioUrl: req.body.torrentioUrl !== undefined ? (req.body.torrentioUrl.trim() || "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy") : (currentConfig.torrentioUrl || "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy"),
+            lumioUrl: req.body.lumioUrl !== undefined ? (req.body.lumioUrl ? req.body.lumioUrl.trim() : "") : (currentConfig.lumioUrl || ""),
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : currentConfig.enabledCatalogs)
         };
 
