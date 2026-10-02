@@ -2574,6 +2574,7 @@ test("Catalogs - my_ad_history_series supports official data.history structure a
                             history: [
                                 { name: "Severance.S01E01.Good.News.About.Hell.1080p.mkv", link: "https://ad.link/sev1" },
                                 { name: "Severance.S01E02.Half.Loop.1080p.mkv", link: "https://ad.link/sev2" },
+                                { name: "MwQjLhkCEY5CYdjw-RJcfBmOulb3i7H7ZurPDy20eGo", link: "https://ad.link/bad_token" }, // Token obfusqué
                                 null, // Corrupt entry
                                 { filesize: 12345 } // Entry with no filename/name
                             ]
@@ -2606,18 +2607,20 @@ test("Catalogs - my_ad_history_series supports official data.history structure a
     };
 
     try {
-        // 1. Test with data.history payload
+        // 1. Test with data.history payload (must group episodes into 1 series card and ignore obfuscated token)
         historyPayloadType = "history";
         const res1 = await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
         assert.ok(Array.isArray(res1.metas));
-        assert.equal(res1.metas.length, 2, "Should parse 2 valid Severance episodes from data.history");
+        assert.equal(res1.metas.length, 1, "Should group all Severance episodes into 1 series card");
         assert.ok(res1.metas[0].name.includes("Severance"));
+        assert.equal(res1.metas[0].id, "tt11280740");
+        assert.ok(!res1.metas.some(m => m.name.includes("MwQj")), "Must discard obfuscated token");
 
         // 2. Test with raw array payload
         historyPayloadType = "array";
         const res2 = await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
         assert.ok(Array.isArray(res2.metas));
-        assert.equal(res2.metas.length, 1, "Should parse 1 Severance episode from raw array data");
+        assert.equal(res2.metas.length, 1, "Should group Severance into 1 series card from raw array data");
 
         // 3. Verify SQLite stored episodes safely
         const sevEntry = realCache.series["tt11280740"];
@@ -2711,6 +2714,28 @@ test("Helpers - cleanUrlAndDomainPrefix universally cleans domains, trackers and
     // 7. Dot-separated tracker domains are cleaned properly
     assert.equal(cleanUrlAndDomainPrefix("torrent9.site.Inception.2010.mkv"), "Inception.2010.mkv");
     assert.equal(cleanUrlAndDomainPrefix("cpasbien.si.Inception.2010.mkv"), "Inception.2010.mkv");
+});
+
+test("Helpers - isObfuscated reliably identifies base64 tokens, hex hashes and preserves real titles", () => {
+    const { isObfuscated } = require("../lib/helpers");
+
+    // Tokens obfusqués / aléatoires (doivent être identifiés comme obfusqués)
+    assert.equal(isObfuscated("MwQjLhkCEY5CYdjw-RJcfBmOulb3i7H7ZurPDy20eGo"), true);
+    assert.equal(isObfuscated("a1b2c3d4e5f67890abcdef1234567890"), true); // Hex 32
+    assert.equal(isObfuscated("12345678-1234-1234-1234-1234567890ab"), true); // UUID
+    assert.equal(isObfuscated("4a8f9b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a.mkv"), true); // Hex avec extension
+    assert.equal(isObfuscated("dGhpc2lzYXRva2Vud2l0aG91dHdvcmRzMTIzNDU2Nzg="), true); // Base64
+    assert.equal(isObfuscated(""), true);
+    assert.equal(isObfuscated(null), true);
+
+    // Titres légitimes (ne doivent PAS être considérés comme obfusqués)
+    assert.equal(isObfuscated("Severance.S01E01.1080p.mkv"), false);
+    assert.equal(isObfuscated("Mr. Robot"), false);
+    assert.equal(isObfuscated("S.W.A.T.2017.mkv"), false);
+    assert.equal(isObfuscated("Breaking Bad S05E14 Ozymandias"), false);
+    assert.equal(isObfuscated("[SR-71] Jujutsu Kaisen S01"), false);
+    assert.equal(isObfuscated("Inception (2010) MULTi 1080p.mkv"), false);
+    assert.equal(isObfuscated("This.Is.Us.S01E01.mkv"), false);
 });
 
 test("Helpers - isConfidentTitleMatch rejects movie extensions and spin-offs for bare franchise queries", () => {
