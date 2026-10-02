@@ -40,7 +40,8 @@ const { handleManifest, handleCatalog, handleMeta, handleStream } = require("./l
 const { handleResolve } = require("./lib/resolver");
 const { startProwlarrWorker, stopProwlarrWorker } = require("./lib/prowlarr-worker");
 const { ALL_CATALOGS, checkTmdbKey } = require("./lib/helpers");
-const { getWarpStatus, checkAllDebridKey } = require("./lib/alldebrid");
+const alldebrid = require("./lib/alldebrid");
+const { getWarpStatus, checkAllDebridKey } = alldebrid;
 const { LOGO_SVG, BACKGROUND_SVG, renderConfigPage, renderAdminPage } = require("./lib/ui");
 const { loadAnimeMapping } = require("./lib/animeMapping");
 
@@ -428,6 +429,33 @@ app.post("/api/user/delete", authLimiter, (req, res) => {
     }
 });
 
+// Nettoyage des magnets AllDebrid bloqués pour un utilisateur
+app.post("/api/user/cleanup-magnets", authLimiter, async (req, res) => {
+    try {
+        const { uuid, password } = req.body;
+        if (!uuid || !password) {
+            return res.status(400).json({ error: "UUID et mot de passe requis." });
+        }
+
+        const user = getUserByUuid(uuid.trim());
+        if (!user || !verifyPassword(password, user.passwordHash)) {
+            return res.status(401).json({ error: "UUID ou mot de passe incorrect." });
+        }
+
+        const config = decryptConfig(user.configEncrypted);
+        const apiKey = config?.apiKey;
+        if (!apiKey) {
+            return res.status(400).json({ error: "Aucune clé AllDebrid configurée pour cet utilisateur." });
+        }
+
+        const result = await alldebrid.cleanupPendingMagnets(apiKey);
+        return res.json(result);
+    } catch (err) {
+        console.error("[User] Erreur cleanup-magnets :", err.message);
+        return res.status(500).json({ error: "Erreur lors du nettoyage des magnets AllDebrid." });
+    }
+});
+
 // =============================================================================
 // 2. ENDPOINTS PUBLICS DE STATUT & VÉRIFICATION
 // =============================================================================
@@ -636,6 +664,49 @@ app.post(["/api/admin/prowlarr/sync", "/api/admin/maintenance/sync-prowlarr"], r
     const { forceSyncProwlarrCrowdsourcing } = require("./lib/prowlarr-worker");
     const result = await forceSyncProwlarrCrowdsourcing();
     res.json(result);
+});
+
+// Purge globale des magnets AllDebrid bloqués
+app.post("/api/admin/cleanup-magnets", requireAdmin, async (req, res) => {
+    try {
+        const { apiKey } = req.body || {};
+        if (apiKey) {
+            const result = await alldebrid.cleanupPendingMagnets(apiKey);
+            return res.json(result);
+        }
+
+        let totalPurged = 0;
+        const cleanedKeys = new Set();
+        const defaultKey = process.env.ALLDEBRID_API_KEY;
+        if (defaultKey) {
+            cleanedKeys.add(defaultKey);
+            const rDef = await alldebrid.cleanupPendingMagnets(defaultKey);
+            totalPurged += (rDef.deletedCount || 0);
+        }
+
+        const users = getAllUsersAdmin();
+        for (const u of users) {
+            const user = getUserByUuid(u.uuid);
+            if (user && user.configEncrypted) {
+                try {
+                    const cfg = decryptConfig(user.configEncrypted);
+                    if (cfg && cfg.apiKey && !cleanedKeys.has(cfg.apiKey)) {
+                        cleanedKeys.add(cfg.apiKey);
+                        const r = await alldebrid.cleanupPendingMagnets(cfg.apiKey);
+                        totalPurged += (r.deletedCount || 0);
+                    }
+                } catch (e) {}
+            }
+        }
+        return res.json({
+            success: true,
+            deletedCount: totalPurged,
+            message: `${totalPurged} magnet(s) bloqué(s) AllDebrid supprimé(s) au total.`
+        });
+    } catch (err) {
+        console.error("[Admin] Erreur cleanup-magnets :", err.message);
+        return res.status(500).json({ error: "Erreur lors de la purge admin des magnets AllDebrid." });
+    }
 });
 
 // =============================================================================

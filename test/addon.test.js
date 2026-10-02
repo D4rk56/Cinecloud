@@ -2630,3 +2630,302 @@ test("Catalogs - my_ad_history_series supports official data.history structure a
     }
 });
 
+test("Helpers - cleanUrlAndDomainPrefix universally cleans domains, trackers and URLs", () => {
+    const { cleanUrlAndDomainPrefix } = require("../lib/helpers");
+
+    // 1. URL extraction
+    assert.equal(
+        cleanUrlAndDomainPrefix("https://tracker.lat/files/Jujutsu.Kaisen.S01E01.mkv"),
+        "Jujutsu.Kaisen.S01E01.mkv"
+    );
+    assert.equal(
+        cleanUrlAndDomainPrefix("http://download.moe/dl?file=Wall-E.2008.1080p.mkv"),
+        "Wall-E.2008.1080p.mkv"
+    );
+
+    // 2. Bracket tracker/domain removal
+    assert.equal(
+        cleanUrlAndDomainPrefix("[ www.Torrent9.site ] Jujutsu.Kaisen.S01E01.mkv"),
+        "Jujutsu.Kaisen.S01E01.mkv"
+    );
+    assert.equal(
+        cleanUrlAndDomainPrefix("[GkTorrent.com] Mr. Robot S01E01.mkv"),
+        "Mr. Robot S01E01.mkv"
+    );
+    assert.equal(
+        cleanUrlAndDomainPrefix("(zone-telechargement.com) S.W.A.T.2017.S01E01.mkv"),
+        "S.W.A.T.2017.S01E01.mkv"
+    );
+
+    // 3. Domain prefixes with modern TLDs (.lat, .moe, .site, .sh, .plus, .fi, etc.)
+    assert.equal(
+        cleanUrlAndDomainPrefix("wawacity.moe - Jujutsu Kaisen S01"),
+        "Jujutsu Kaisen S01"
+    );
+    assert.equal(
+        cleanUrlAndDomainPrefix("cpasbien.plus_Mr. Robot S01E01.mkv"),
+        "Mr. Robot S01E01.mkv"
+    );
+    assert.equal(
+        cleanUrlAndDomainPrefix("extreme-down.lat.Wall-E.2008.mkv"),
+        "Wall-E.2008.mkv"
+    );
+    assert.equal(
+        cleanUrlAndDomainPrefix("yggtorrent.fi: S.W.A.T.2017.mkv"),
+        "S.W.A.T.2017.mkv"
+    );
+    assert.equal(
+        cleanUrlAndDomainPrefix("zone-telechargement.sh - Inception.2010.mkv"),
+        "Inception.2010.mkv"
+    );
+
+    // 4. Warez names without TLD
+    assert.equal(
+        cleanUrlAndDomainPrefix("zone-telechargement_Wall-E.2008.mkv"),
+        "Wall-E.2008.mkv"
+    );
+    assert.equal(
+        cleanUrlAndDomainPrefix("wawacity-Mr. Robot S01E01.mkv"),
+        "Mr. Robot S01E01.mkv"
+    );
+    assert.equal(
+        cleanUrlAndDomainPrefix("cpasbien.S.W.A.T.2017.mkv"),
+        "S.W.A.T.2017.mkv"
+    );
+
+    // 5. Preserves legitimate titles & non-tracker tags
+    assert.equal(cleanUrlAndDomainPrefix("Mr. Robot"), "Mr. Robot");
+    assert.equal(cleanUrlAndDomainPrefix("S.W.A.T."), "S.W.A.T.");
+    assert.equal(cleanUrlAndDomainPrefix("Wall-E"), "Wall-E");
+    assert.equal(cleanUrlAndDomainPrefix("[SR-71] Jujutsu Kaisen S01"), "[SR-71] Jujutsu Kaisen S01");
+});
+
+test("Helpers - isConfidentTitleMatch rejects movie extensions and spin-offs for bare franchise queries", () => {
+    const { isConfidentTitleMatch } = require("../lib/helpers");
+
+    // Rejets formels de sous-titres / extensions pour un titre bare
+    assert.equal(isConfidentTitleMatch("Jujutsu Kaisen", "Jujutsu Kaisen: Execution"), false);
+    assert.equal(isConfidentTitleMatch("Jujutsu Kaisen", "Jujutsu Kaisen : Le Film"), false);
+    assert.equal(isConfidentTitleMatch("Jujutsu Kaisen", "Jujutsu Kaisen: Endgame"), false);
+    assert.equal(isConfidentTitleMatch("Jujutsu Kaisen", "Jujutsu Kaisen Movie"), false);
+    assert.equal(isConfidentTitleMatch("Avengers", "Avengers: Endgame"), false);
+
+    // Matchs valides quand les deux correspondent
+    assert.equal(isConfidentTitleMatch("Jujutsu Kaisen", "Jujutsu Kaisen"), true);
+    assert.equal(isConfidentTitleMatch("Jujutsu Kaisen", "[SR-71] Jujutsu Kaisen 1080p"), true);
+    assert.equal(isConfidentTitleMatch("Avengers Endgame", "Avengers: Endgame"), true);
+    assert.equal(isConfidentTitleMatch("Dune Part Two", "Dune: Part Two"), true);
+});
+
+test("Helpers - classifyContent strictly forces type=series when season or episode markers are present", async () => {
+    const { classifyContent } = require("../lib/helpers");
+
+    // Anime avec S01 et tag [SR-71]
+    const c1 = await classifyContent("mag_1", "[SR-71] Jujutsu Kaisen S01 1080p", "default");
+    assert.equal(c1.type, "series");
+
+    // Fichier avec Season 2
+    const c2 = await classifyContent("mag_2", "Some Show Season 2 720p", "default");
+    assert.equal(c2.type, "series");
+
+    // Fichier avec E05
+    const c3 = await classifyContent("mag_3", "Anime.Name.E05.1080p.mkv", "default");
+    assert.equal(c3.type, "series");
+
+    // Fichier avec 1x08
+    const c4 = await classifyContent("mag_4", "Drama.1x08.HDTV.mkv", "default");
+    assert.equal(c4.type, "series");
+});
+
+test("AllDebrid - deleteMagnet and cleanupPendingMagnets delete blocked magnets", async () => {
+    const alldebrid = require("../lib/alldebrid");
+    const originalPost = alldebrid.adPost;
+    const originalGet = alldebrid.adGet;
+
+    const deletedIds = [];
+    alldebrid.adPost = async (endpoint, apiKey, data) => {
+        if (endpoint === "/v4/magnet/delete") {
+            deletedIds.push(data.id);
+            return { data: { status: "success" } };
+        }
+        return { data: { status: "error" } };
+    };
+
+    alldebrid.adGet = async (endpoint, apiKey, params) => {
+        if (endpoint === "/v4.1/magnet/status") {
+            return {
+                data: {
+                    status: "success",
+                    data: {
+                        magnets: [
+                            { id: 101, ready: true, statusCode: 4, filename: "Ready.Movie.mkv" },
+                            { id: 102, ready: false, statusCode: 1, filename: "Stuck.Movie.mkv" },
+                            { id: 103, ready: false, statusCode: 0, filename: "Processing.Series.mkv" },
+                            { id: 104, ready: false, statusCode: 4, filename: "StatusCode4.mkv" }
+                        ]
+                    }
+                }
+            };
+        }
+        if (endpoint === "/v4/magnet/delete") {
+            deletedIds.push(params.id);
+            return { data: { status: "success" } };
+        }
+        return { data: { status: "error" } };
+    };
+
+    try {
+        // 1. Test direct deleteMagnet
+        const ok = await alldebrid.deleteMagnet(999, "dummy_key");
+        assert.equal(ok, true);
+        assert.ok(deletedIds.includes(999));
+
+        // 2. Test cleanupPendingMagnets
+        const res = await alldebrid.cleanupPendingMagnets("dummy_key");
+        assert.equal(res.success, true);
+        assert.equal(res.deletedCount, 2);
+        assert.equal(res.totalPending, 2);
+        assert.ok(deletedIds.includes(102));
+        assert.ok(deletedIds.includes(103));
+        assert.ok(!deletedIds.includes(101));
+        assert.ok(!deletedIds.includes(104));
+    } finally {
+        alldebrid.adPost = originalPost;
+        alldebrid.adGet = originalGet;
+    }
+});
+
+test("Catalogs & AllDebrid - Season pack expands internal video files individually and epSuffix avoids Enull", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const alldebrid = require("../lib/alldebrid");
+    const originalAdGet = alldebrid.adGet;
+    const originalGetMagnetFiles = alldebrid.getMagnetFiles;
+
+    const mockConfig = { apiKey: "fake_ad_key", tmdbKey: "default", debridProvider: "alldebrid" };
+    const fakeCache = { series: {}, classification: {} };
+
+    alldebrid.adGet = async (endpoint) => {
+        if (endpoint === "/v4.1/magnet/status") {
+            return {
+                data: {
+                    status: "success",
+                    data: {
+                        magnets: [
+                            {
+                                id: 555,
+                                filename: "[SR-71] Jujutsu Kaisen S01 MULTi 1080p",
+                                ready: true,
+                                statusCode: 4,
+                                size: 15000000000
+                            }
+                        ]
+                    }
+                }
+            };
+        }
+        return { data: { status: "success", data: {} } };
+    };
+
+    alldebrid.getMagnetFiles = async (ids) => {
+        return {
+            555: [
+                { n: "Jujutsu.Kaisen.S01E01.1080p.mkv", s: 1000000000, l: "https://ad.com/dl/e01" },
+                { n: "Jujutsu.Kaisen.S01E02.1080p.mkv", s: 1000000000, l: "https://ad.com/dl/e02" },
+                { n: "Jujutsu.Kaisen.S01E03.1080p.mkv", s: 1000000000, l: "https://ad.com/dl/e03" },
+                { n: "readme.txt", s: 100 }
+            ]
+        };
+    };
+
+    try {
+        const catRes = await handleCatalog(mockConfig, "series", "my_ad_animes", fakeCache);
+        assert.ok(catRes && Array.isArray(catRes.metas));
+        assert.equal(catRes.metas.length, 1);
+        assert.ok(catRes.metas[0].name.includes("Jujutsu Kaisen"));
+
+        // Verify episodes expanded in cache
+        const sKeys = Object.keys(fakeCache.series);
+        assert.ok(sKeys.length > 0);
+        const sEntry = fakeCache.series[sKeys[0]];
+        assert.ok(sEntry && Array.isArray(sEntry.episodes));
+        assert.equal(sEntry.episodes.length, 3, "All 3 video episodes must be deployed individually");
+        assert.equal(sEntry.episodes[0].episode, 1);
+        assert.equal(sEntry.episodes[1].episode, 2);
+        assert.equal(sEntry.episodes[2].episode, 3);
+    } finally {
+        alldebrid.adGet = originalAdGet;
+        alldebrid.getMagnetFiles = originalGetMagnetFiles;
+    }
+});
+
+test("API Routes - POST /api/user/cleanup-magnets and POST /api/admin/cleanup-magnets", async () => {
+    const app = require("../index");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+    const originalCleanup = alldebrid.cleanupPendingMagnets;
+
+    let cleanupCalledWithKey = null;
+    alldebrid.cleanupPendingMagnets = async (key) => {
+        cleanupCalledWithKey = key;
+        return { success: true, deletedCount: 3, message: "3 magnets purgés" };
+    };
+
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    let testUuid = null;
+    const testPassword = "testPassword123";
+
+    try {
+        const regRes = await axios.post(`${base}/api/user/register`, {
+            password: testPassword,
+            pseudo: "CleanupUser",
+            apiKey: "test_ad_key_1234"
+        });
+        assert.equal(regRes.status, 200);
+        testUuid = regRes.data.uuid;
+
+        // 1. User cleanup - invalid auth
+        try {
+            await axios.post(`${base}/api/user/cleanup-magnets`, { uuid: testUuid, password: "wrong" });
+            assert.fail("Must fail on wrong password");
+        } catch (e) {
+            assert.equal(e.response.status, 401);
+        }
+
+        // 2. User cleanup - valid auth
+        const userRes = await axios.post(`${base}/api/user/cleanup-magnets`, { uuid: testUuid, password: testPassword });
+        assert.equal(userRes.status, 200);
+        assert.equal(userRes.data.success, true);
+        assert.equal(userRes.data.deletedCount, 3);
+        assert.equal(cleanupCalledWithKey, "test_ad_key_1234");
+
+        // 3. Admin cleanup - without token
+        try {
+            await axios.post(`${base}/api/admin/cleanup-magnets`, {});
+            assert.fail("Must fail without admin token");
+        } catch (e) {
+            assert.equal(e.response.status, 401);
+        }
+
+        // 4. Admin login & cleanup
+        const loginRes = await axios.post(`${base}/api/admin/login`, { password: process.env.ADMIN_PASSWORD || "admin123" });
+        const adminToken = loginRes.data.token;
+        const adminRes = await axios.post(`${base}/api/admin/cleanup-magnets`, { apiKey: "admin_override_key" }, {
+            headers: { "x-admin-token": adminToken }
+        });
+        assert.equal(adminRes.status, 200);
+        assert.equal(adminRes.data.success, true);
+        assert.equal(cleanupCalledWithKey, "admin_override_key");
+    } finally {
+        if (testUuid) {
+            try {
+                await axios.post(`${base}/api/user/delete`, { uuid: testUuid, password: testPassword });
+            } catch (_) {}
+        }
+        server.close();
+        alldebrid.cleanupPendingMagnets = originalCleanup;
+    }
+});
+
