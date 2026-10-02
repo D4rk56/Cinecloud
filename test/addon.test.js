@@ -2240,6 +2240,9 @@ test("Catalogs - handleCatalog accurately routes anime episodes to series and mo
             return originalGet(url, opts);
         };
 
+        // Simulation du bug où cache.series contenait groupTitle mais pas le tableau episodes
+        mockCache.series["tt2907768"] = { groupTitle: "frieren" };
+
         // 1. Appel du catalogue Séries
         const seriesCat = await handleCatalog(mockConfig, "series", "my_ad_history_series", mockCache);
         assert.ok(Array.isArray(seriesCat.metas));
@@ -2396,4 +2399,48 @@ test("Playback - History and Links direct unlock for series and movies", async (
     ];
     const movieStreams = await handleStream(mockConfig, "movie", "tt9999999", mockCache, "http://localhost:3000", "test-user");
     assert.ok(movieStreams.streams.some(s => s.title.includes("Movie Direct")));
+});
+
+test("AllDebrid - checkInstantMagnets is read-only and never uploads magnets to user account", async () => {
+    const { checkInstantMagnets } = require("../lib/alldebrid");
+    const alldebrid = require("../lib/alldebrid");
+
+    let uploadCalled = false;
+    let instantCalled = false;
+    const originalPost = alldebrid.adPost;
+    const originalGet = alldebrid.adGet;
+
+    alldebrid.adPost = async (endpoint, apiKey, data) => {
+        if (endpoint.includes("upload")) {
+            uploadCalled = true;
+        }
+        return { data: { status: "error" } };
+    };
+
+    alldebrid.adGet = async (endpoint, apiKey, params) => {
+        if (endpoint === "/v4/magnet/instant") {
+            instantCalled = true;
+            return {
+                data: {
+                    status: "success",
+                    data: {
+                        magnets: [
+                            { hash: "1122334455667788990011223344556677889900", instant: true }
+                        ]
+                    }
+                }
+            };
+        }
+        return { data: { status: "error" } };
+    };
+
+    try {
+        const res = await checkInstantMagnets(["1122334455667788990011223344556677889900"], "test_ad_key");
+        assert.equal(uploadCalled, false, "checkInstantMagnets ne doit JAMAIS appeler upload (ce qui polluerait le compte)");
+        assert.equal(instantCalled, true, "checkInstantMagnets doit interroger l'endpoint en lecture seule /v4/magnet/instant");
+        assert.equal(res["1122334455667788990011223344556677889900"], true);
+    } finally {
+        alldebrid.adPost = originalPost;
+        alldebrid.adGet = originalGet;
+    }
 });
