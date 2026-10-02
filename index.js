@@ -679,7 +679,7 @@ app.get("/:uuid/catalog/:type/:id.json", async (req, res) => {
         const result = await handleCatalog(config, req.params.type, req.params.id, cache, extra);
         res.json(result);
     } catch (err) {
-        console.error(`[Catalog] Erreur ${req.params.id}:`, err.message);
+        console.error(`[Catalog] Erreur ${req.params.id}:`, err.stack || err.message);
         res.json({ metas: [] });
     }
 });
@@ -693,6 +693,7 @@ app.get("/:uuid/catalog/:type/:id/:extra.json", async (req, res) => {
         const result = await handleCatalog(config, req.params.type, req.params.id, cache, extraObj);
         res.json(result);
     } catch (err) {
+        console.error(`[Catalog] Erreur ${req.params.id} (${req.params.extra}):`, err.stack || err.message);
         res.json({ metas: [] });
     }
 });

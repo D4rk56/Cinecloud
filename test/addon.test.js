@@ -2546,3 +2546,87 @@ test("Catalogs - my_ad_history_series with real SQLite loadCache never throws un
     }
 });
 
+test("Catalogs - my_ad_history_series supports official data.history structure and raw array", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const { loadCache } = require("../lib/db");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+
+    const realCache = loadCache();
+    const mockConfig = {
+        apiKey: "test_ad_key",
+        tmdbKey: "test_tmdb_key",
+        debridProvider: "alldebrid"
+    };
+
+    const originalAdGet = alldebrid.adGet;
+    const originalAxiosGet = axios.get;
+
+    let historyPayloadType = "history"; // "history" or "array"
+
+    alldebrid.adGet = async (endpoint) => {
+        if (endpoint === "/v4/user/history") {
+            if (historyPayloadType === "history") {
+                return {
+                    data: {
+                        status: "success",
+                        data: {
+                            history: [
+                                { name: "Severance.S01E01.Good.News.About.Hell.1080p.mkv", link: "https://ad.link/sev1" },
+                                { name: "Severance.S01E02.Half.Loop.1080p.mkv", link: "https://ad.link/sev2" },
+                                null, // Corrupt entry
+                                { filesize: 12345 } // Entry with no filename/name
+                            ]
+                        }
+                    }
+                };
+            } else {
+                return {
+                    data: {
+                        status: "success",
+                        data: [
+                            { filename: "Severance.S01E03.In.Perpetuity.1080p.mkv", link: "https://ad.link/sev3" }
+                        ]
+                    }
+                };
+            }
+        }
+        return { data: { status: "error" } };
+    };
+
+    axios.get = async (url, opts) => {
+        if (url && typeof url === "string" && url.includes("cinemeta.strem.io/catalog/series")) {
+            return {
+                data: {
+                    metas: [{ id: "tt11280740", name: "Severance", poster: "https://poster-sev.jpg" }]
+                }
+            };
+        }
+        return { data: { results: [] } };
+    };
+
+    try {
+        // 1. Test with data.history payload
+        historyPayloadType = "history";
+        const res1 = await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
+        assert.ok(Array.isArray(res1.metas));
+        assert.equal(res1.metas.length, 2, "Should parse 2 valid Severance episodes from data.history");
+        assert.ok(res1.metas[0].name.includes("Severance"));
+
+        // 2. Test with raw array payload
+        historyPayloadType = "array";
+        const res2 = await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
+        assert.ok(Array.isArray(res2.metas));
+        assert.equal(res2.metas.length, 1, "Should parse 1 Severance episode from raw array data");
+
+        // 3. Verify SQLite stored episodes safely
+        const sevEntry = realCache.series["tt11280740"];
+        assert.ok(sevEntry);
+        assert.ok(Array.isArray(sevEntry.episodes));
+        assert.equal(sevEntry.episodes.length, 3, "Total 3 episodes stored in cache for Severance");
+    } finally {
+        alldebrid.adGet = originalAdGet;
+        axios.get = originalAxiosGet;
+    }
+});
+
