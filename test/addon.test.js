@@ -1057,6 +1057,22 @@ test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagn
         const unauthRes = await checkProwlarrConnectivity(baseUrl, "wrong_key");
         assert.equal(unauthRes.success, false);
         assert.ok(unauthRes.error.includes("401"), "Doit diagnostiquer l'erreur 401");
+
+        // Test 3d : Détection d'URL Lumio saisie dans Prowlarr
+        const lumioCheck = await checkProwlarrConnectivity("https://mylumio.tv/manifest.json", "some_key");
+        assert.equal(lumioCheck.success, false);
+        assert.ok(lumioCheck.error.includes("Lumio et Prowlarr sont deux services distincts"), "Doit détecter la confusion d'URL Lumio");
+
+        // Test 3e : Simulation d'erreur Cloudflare 1033 (HTTP 530)
+        mode = "cf1033";
+        server.removeAllListeners("request");
+        server.on("request", (req, res) => {
+            res.writeHead(530, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error_code: 1033, title: "Error 1033: Cloudflare Tunnel error" }));
+        });
+        const cfRes = await checkProwlarrConnectivity(baseUrl, "some_key");
+        assert.equal(cfRes.success, false);
+        assert.ok(cfRes.error.includes("Cloudflare 1033"), "Doit diagnostiquer l'erreur Cloudflare 1033");
     } finally {
         server.close();
     }

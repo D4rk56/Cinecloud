@@ -356,6 +356,57 @@ app.post("/api/check/prowlarr", async (req, res) => {
     res.json(result);
 });
 
+app.post("/api/check/lumio", async (req, res) => {
+    const { lumioUrl } = req.body;
+    if (!lumioUrl || typeof lumioUrl !== "string" || !lumioUrl.trim()) {
+        return res.json({ success: false, valid: false, error: "Veuillez saisir l'URL de votre manifest Lumio" });
+    }
+
+    let raw = lumioUrl.trim();
+    if (!raw.endsWith("/manifest.json")) {
+        raw = raw.replace(/\/+$/, "") + "/manifest.json";
+    }
+
+    try {
+        const resp = await axios.get(raw, {
+            headers: {
+                "User-Agent": BROWSER_UA,
+                "Accept": "application/json"
+            },
+            timeout: 5000
+        });
+
+        if (resp.status === 200 && resp.data && resp.data.id) {
+            return res.json({
+                success: true,
+                valid: true,
+                name: resp.data.name || "Lumio",
+                version: resp.data.version || "1.0",
+                description: resp.data.description || ""
+            });
+        }
+        return res.json({ success: false, valid: false, error: "Réponse reçue mais le format de manifest Stremio est invalide" });
+    } catch (err) {
+        const respDataStr = err.response?.data ? (typeof err.response.data === "string" ? err.response.data : JSON.stringify(err.response.data)) : "";
+        if (err.response && (err.response.status === 530 || respDataStr.includes("1033") || respDataStr.includes("Cloudflare Tunnel error"))) {
+            return res.json({
+                success: false,
+                valid: false,
+                isCloudflare1033: true,
+                error: "mylumio.tv est actuellement hors-ligne (Erreur Cloudflare 1033 : Tunnel déconnecté côté Lumio). Laissez ce champ vide ou réessayez plus tard."
+            });
+        }
+        if (err.response && err.response.status === 404) {
+            return res.json({ success: false, valid: false, error: "Manifest introuvable (HTTP 404). Vérifiez l'URL de votre compte mylumio.tv." });
+        }
+        return res.json({
+            success: false,
+            valid: false,
+            error: err.response ? `Erreur HTTP ${err.response.status} de Lumio` : (err.message || "Impossible de joindre Lumio")
+        });
+    }
+});
+
 // Suppression de configuration / Compte utilisateur
 app.post("/api/user/delete", authLimiter, (req, res) => {
     try {
