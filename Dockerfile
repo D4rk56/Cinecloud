@@ -4,7 +4,9 @@
 # ==============================================================================
 
 # Étape 1 : Construction et compilation des dépendances natives (anitomy-js / node-gyp)
-FROM node:24-alpine AS builder
+# --platform=$BUILDPLATFORM force la compilation sur la plateforme HÔTE (natif, pas d'émulation QEMU)
+# ce qui évite les timeouts et erreurs node-gyp lors de la compilation arm64 sous QEMU.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -14,7 +16,7 @@ RUN apk add --no-cache python3 make g++ gcc
 # Copie des fichiers de dépendances
 COPY package*.json ./
 
-# Compilation native des dépendances de production
+# Compilation native des dépendances de production sur la plateforme hôte
 RUN npm install --omit=dev && npm cache clean --force
 
 # Étape 2 : Image d'exécution minimale pour la production
