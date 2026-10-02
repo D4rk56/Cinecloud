@@ -2131,6 +2131,118 @@ test("Helpers & Cloud - formatAioStream handles Exit 8 WEB release with proper q
     assert.ok(formattedTb.title.includes("⚡ Lecture immédiate"), "Statut Torbox");
 });
 
+test("Helpers & Catalogs - extractCleanTitle and parseSeasonEpisode handle parentheses, technical tags, and animes", () => {
+    const { extractCleanTitle, parseSeasonEpisode, isConfidentTitleMatch } = require("../lib/helpers");
 
+    // 1. Parenthèses techniques et tags éliminés proprement
+    const t1 = extractCleanTitle("DanDaDan (TV) - 01 (1080p).mkv");
+    assert.equal(t1.title, "DanDaDan");
+    const se1 = parseSeasonEpisode("DanDaDan (TV) - 01 (1080p).mkv");
+    assert.deepEqual(se1, { season: 1, episode: 1 });
 
+    // 2. Année placée entre parenthèses au tout début
+    const t2 = extractCleanTitle("(2024) Dune Part Two.mkv");
+    assert.equal(t2.title, "Dune Part Two");
+    assert.equal(t2.year, "2024");
+    assert.equal(parseSeasonEpisode("(2024) Dune Part Two.mkv"), null);
 
+    // 3. Titre bilingue ou alternatif entre parenthèses
+    const t3 = extractCleanTitle("Monstres & Cie (Monsters, Inc.) (2001).mkv");
+    assert.equal(t3.title, "Monstres & Cie");
+    assert.equal(t3.year, "2001");
+    assert.equal(t3.altTitle, "Monsters, Inc");
+
+    // 4. Animé avec épisode absolu à 4 chiffres (One Piece)
+    const t4 = extractCleanTitle("One Piece E1080 VOSTFR 1080p WEB-DL x264.mkv");
+    assert.equal(t4.title, "One Piece");
+    const se4 = parseSeasonEpisode("One Piece E1080 VOSTFR 1080p WEB-DL x264.mkv");
+    assert.deepEqual(se4, { season: 1, episode: 1080 });
+
+    // 5. Animé fansub standard avec tiret épisode et parenthèses
+    const t5 = extractCleanTitle("[SubsPlease] Sousou no Frieren (2023) - 05 (1080p) [ABCD].mkv");
+    assert.equal(t5.title, "Sousou no Frieren");
+    assert.equal(t5.year, "2023");
+    const se5 = parseSeasonEpisode("[SubsPlease] Sousou no Frieren (2023) - 05 (1080p) [ABCD].mkv");
+    assert.deepEqual(se5, { season: 1, episode: 5 });
+
+    // 6. Pack de saison complète
+    const se6 = parseSeasonEpisode("Arcane (Season 1) [1080p].mkv");
+    assert.equal(se6?.season, 1);
+    assert.equal(se6?.isSeasonPack, true);
+
+    // 7. isConfidentTitleMatch avec titre et année entre parenthèses
+    assert.ok(isConfidentTitleMatch("Avatar (2009)", "Avatar", "2009", "2009"));
+    assert.ok(isConfidentTitleMatch("Sousou no Frieren", "Sousou no Frieren"));
+    assert.ok(isConfidentTitleMatch("Movie Title (VFF) 1080p", "Movie Title"));
+});
+
+test("Catalogs - handleCatalog accurately routes anime episodes to series and movies to movie catalog", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+
+    const mockCache = { series: {}, movies: {} };
+    const mockConfig = {
+        apiKey: "mock_ad_key",
+        tmdbKey: "default",
+        enabledCatalogs: "all"
+    };
+
+    // Test avec liens mixtes : un film et des épisodes d'animés
+    const mockLinks = [
+        { filename: "Avatar (2009) 1080p.mkv", link: "https://alldebrid.com/dl/avatar" },
+        { filename: "[SubsPlease] Sousou no Frieren - 05 (1080p).mkv", link: "https://alldebrid.com/dl/frieren05" },
+        { filename: "[SubsPlease] Sousou no Frieren - 06 (1080p).mkv", link: "https://alldebrid.com/dl/frieren06" }
+    ];
+
+    const alldebrid = require("../lib/alldebrid");
+    const originalAdGet = alldebrid.adGet;
+    alldebrid.adGet = async (endpoint) => {
+        if (endpoint === "/v4/user/history" || endpoint === "/v4/user/links") {
+            return {
+                data: {
+                    status: "success",
+                    data: { links: mockLinks }
+                }
+            };
+        }
+        return originalAdGet(endpoint);
+    };
+
+    const axios = require("axios");
+    const originalGet = axios.get;
+    try {
+        axios.get = async (url, opts) => {
+            if (url && typeof url === "string" && url.includes("cinemeta.strem.io/catalog/series")) {
+                return {
+                    data: {
+                        metas: [{ id: "tt29277873", name: "Sousou no Frieren", poster: "https://poster.jpg" }]
+                    }
+                };
+            }
+            if (url && typeof url === "string" && url.includes("cinemeta.strem.io/catalog/movie")) {
+                return {
+                    data: {
+                        metas: [{ id: "tt0499549", name: "Avatar", year: "2009", poster: "https://avatar.jpg" }]
+                    }
+                };
+            }
+            return originalGet(url, opts);
+        };
+
+        // 1. Appel du catalogue Séries
+        const seriesCat = await handleCatalog(mockConfig, "series", "my_ad_history_series", mockCache);
+        assert.ok(Array.isArray(seriesCat.metas));
+        // Seul Frieren doit être présent dans les séries, Avatar ne doit PAS y être
+        assert.ok(seriesCat.metas.some(m => m.name.toLowerCase().includes("frieren")));
+        assert.ok(!seriesCat.metas.some(m => m.name.toLowerCase().includes("avatar")));
+
+        // 2. Appel du catalogue Films
+        const movieCat = await handleCatalog(mockConfig, "movie", "my_ad_history", mockCache);
+        assert.ok(Array.isArray(movieCat.metas));
+        // Seul Avatar doit être présent dans les films, Frieren ne doit PAS y être
+        assert.ok(movieCat.metas.some(m => m.name.toLowerCase().includes("avatar")));
+        assert.ok(!movieCat.metas.some(m => m.name.toLowerCase().includes("frieren")));
+    } finally {
+        alldebrid.adGet = originalAdGet;
+        axios.get = originalGet;
+    }
+});
