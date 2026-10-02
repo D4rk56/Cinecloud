@@ -2698,6 +2698,19 @@ test("Helpers - cleanUrlAndDomainPrefix universally cleans domains, trackers and
     assert.equal(cleanUrlAndDomainPrefix("S.W.A.T."), "S.W.A.T.");
     assert.equal(cleanUrlAndDomainPrefix("Wall-E"), "Wall-E");
     assert.equal(cleanUrlAndDomainPrefix("[SR-71] Jujutsu Kaisen S01"), "[SR-71] Jujutsu Kaisen S01");
+
+    // 6. Dot-separated titles containing common English words must NOT be truncated as domains
+    assert.equal(cleanUrlAndDomainPrefix("This.Is.Us.S01E01.mkv"), "This.Is.Us.S01E01.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("Made.In.Abyss.S01E01.mkv"), "Made.In.Abyss.S01E01.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("Lost.In.Space.1998.mkv"), "Lost.In.Space.1998.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("Emily.In.Paris.S01E01.mkv"), "Emily.In.Paris.S01E01.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("Back.To.The.Future.1985.mkv"), "Back.To.The.Future.1985.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("Life.Is.Beautiful.1997.mkv"), "Life.Is.Beautiful.1997.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("Who.Is.America.S01E01.mkv"), "Who.Is.America.S01E01.mkv");
+
+    // 7. Dot-separated tracker domains are cleaned properly
+    assert.equal(cleanUrlAndDomainPrefix("torrent9.site.Inception.2010.mkv"), "Inception.2010.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("cpasbien.si.Inception.2010.mkv"), "Inception.2010.mkv");
 });
 
 test("Helpers - isConfidentTitleMatch rejects movie extensions and spin-offs for bare franchise queries", () => {
@@ -2761,7 +2774,8 @@ test("AllDebrid - deleteMagnet and cleanupPendingMagnets delete blocked magnets"
                             { id: 101, ready: true, statusCode: 4, filename: "Ready.Movie.mkv" },
                             { id: 102, ready: false, statusCode: 1, filename: "Stuck.Movie.mkv" },
                             { id: 103, ready: false, statusCode: 0, filename: "Processing.Series.mkv" },
-                            { id: 104, ready: false, statusCode: 4, filename: "StatusCode4.mkv" }
+                            { id: 104, ready: false, statusCode: 4, filename: "StatusCode4.mkv" },
+                            { id: 105, ready: false, statusCode: "4", filename: "StatusCodeString4.mkv" }
                         ]
                     }
                 }
@@ -2789,6 +2803,7 @@ test("AllDebrid - deleteMagnet and cleanupPendingMagnets delete blocked magnets"
         assert.ok(deletedIds.includes(103));
         assert.ok(!deletedIds.includes(101));
         assert.ok(!deletedIds.includes(104));
+        assert.ok(!deletedIds.includes(105), "statusCode '4' as string must not be deleted");
     } finally {
         alldebrid.adPost = originalPost;
         alldebrid.adGet = originalGet;
