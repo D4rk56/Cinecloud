@@ -2460,3 +2460,89 @@ test("AllDebrid - checkInstantMagnets is read-only and never uploads magnets to 
         alldebrid.adGet = originalGet;
     }
 });
+
+test("Catalogs - my_ad_history_series with real SQLite loadCache never throws undefined push and persists episodes", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const { loadCache } = require("../lib/db");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+
+    const realCache = loadCache();
+    const mockConfig = {
+        apiKey: "test_ad_key",
+        tmdbKey: "test_tmdb_key",
+        debridProvider: "alldebrid"
+    };
+
+    const originalAdGet = alldebrid.adGet;
+    const originalAxiosGet = axios.get;
+
+    alldebrid.adGet = async (endpoint) => {
+        if (endpoint === "/v4/user/history") {
+            return {
+                data: {
+                    status: "success",
+                    data: {
+                        links: [
+                            { filename: "Breaking.Bad.S05E14.Ozymandias.1080p.mkv", link: "https://ad.link/bb14" },
+                            { filename: "Breaking.Bad.S05E15.Granite.State.1080p.mkv", link: "https://ad.link/bb15" },
+                            { filename: "Sousou.no.Frieren.S01E01.1080p.mkv", link: "https://ad.link/frieren1" },
+                            { filename: "Weird.Series.Without.Link.S01E02.mkv" } // link is undefined
+                        ]
+                    }
+                }
+            };
+        }
+        return { data: { status: "error" } };
+    };
+
+    axios.get = async (url, opts) => {
+        if (url && typeof url === "string" && url.includes("cinemeta.strem.io/catalog/series")) {
+            if (url.includes("Breaking")) {
+                return {
+                    data: {
+                        metas: [{ id: "tt0903747", name: "Breaking Bad", poster: "https://poster-bb.jpg" }]
+                    }
+                };
+            }
+            return {
+                data: {
+                    metas: [{ id: "tt29277873", name: "Sousou no Frieren", poster: "https://poster.jpg" }]
+                }
+            };
+        }
+        return { data: { results: [] } };
+    };
+
+    try {
+        // Pre-populate cache with an entry that has groupTitle to simulate pre-existing series without episodes array
+        realCache.series["tt0903747"] = { groupTitle: "breaking bad" };
+
+        // 1. First catalog fetch
+        const res = await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
+        assert.ok(Array.isArray(res.metas), "metas should be an array");
+        assert.ok(res.metas.length >= 2, "metas should contain episodes");
+
+        // Verify episodes in cache
+        const bbEntry = realCache.series["tt0903747"];
+        assert.ok(bbEntry, "Breaking Bad entry should exist");
+        assert.ok(Array.isArray(bbEntry.episodes), "episodes should be an array");
+        assert.equal(bbEntry.episodes.length, 2, "Breaking Bad should have 2 episodes in cache");
+
+        // 2. Fetch again to verify idempotency (no duplicate episodes)
+        const res2 = await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
+        assert.ok(Array.isArray(res2.metas));
+        assert.equal(realCache.series["tt0903747"].episodes.length, 2, "Episodes must not be duplicated on repeated catalog load");
+
+        // 3. Verify persistence across fresh cache proxy reload from SQLite
+        const freshCache = loadCache();
+        const reloadedBb = freshCache.series["tt0903747"];
+        assert.ok(reloadedBb, "Entry should reload from SQLite");
+        assert.ok(Array.isArray(reloadedBb.episodes), "Reloaded episodes should be an array");
+        assert.equal(reloadedBb.episodes.length, 2, "Reloaded episodes count should match");
+    } finally {
+        alldebrid.adGet = originalAdGet;
+        axios.get = originalAxiosGet;
+    }
+});
+
