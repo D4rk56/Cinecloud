@@ -2246,3 +2246,142 @@ test("Catalogs - handleCatalog accurately routes anime episodes to series and mo
         axios.get = originalGet;
     }
 });
+
+test("TMDB <-> IMDb Bridge - in-memory LRU caching eliminates redundant HTTP calls", async () => {
+    const { tmdbToImdbId, imdbIdToTitleAndYear } = require("../lib/helpers");
+    const axios = require("axios");
+    const originalGet = axios.get;
+
+    let httpCallCount = 0;
+    try {
+        axios.get = async (url, opts) => {
+            httpCallCount++;
+            if (url.includes("/external_ids")) {
+                return { data: { imdb_id: "tt8888888" } };
+            }
+            if (url.includes("/find/")) {
+                return {
+                    data: {
+                        tv_results: [{ name: "Fresh Test Show", original_name: "Fresh Test Show", first_air_date: "2024-01-01" }],
+                        movie_results: []
+                    }
+                };
+            }
+            return originalGet(url, opts);
+        };
+
+        // 1. Premier appel TMDB -> IMDb (hit réseau)
+        const id1 = await tmdbToImdbId(999999, "series", "fresh_mock_key");
+        assert.equal(id1, "tt8888888");
+        assert.equal(httpCallCount, 1);
+
+        // 2. Second appel identique (doit venir du cache 0 ms, aucun hit réseau)
+        const id2 = await tmdbToImdbId(999999, "series", "fresh_mock_key");
+        assert.equal(id2, "tt8888888");
+        assert.equal(httpCallCount, 1, "Le 2e appel tmdbToImdbId doit provenir du cache LRU");
+
+        // 3. Premier appel IMDb -> Titre (hit réseau)
+        const meta1 = await imdbIdToTitleAndYear("tt8888888", "fresh_mock_key", "series");
+        assert.equal(meta1.title, "Fresh Test Show");
+        assert.equal(httpCallCount, 2);
+
+        // 4. Second appel identique (doit venir du cache 0 ms)
+        const meta2 = await imdbIdToTitleAndYear("tt8888888", "fresh_mock_key", "series");
+        assert.equal(meta2.title, "Fresh Test Show");
+        assert.equal(httpCallCount, 2, "Le 2e appel imdbIdToTitleAndYear doit provenir du cache LRU");
+    } finally {
+        axios.get = originalGet;
+    }
+});
+
+test("Catalogs - Infinite scroll pagination by exactly 50 items and alias support", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+
+    const mockCache = { series: {}, movies: {}, classification: {} };
+    const mockConfig = {
+        apiKey: "mock_ad_key",
+        tmdbKey: "default",
+        enabledCatalogs: "all"
+    };
+
+    // 120 éléments dans le cloud magnets
+    const mockMagnets = [];
+    for (let i = 1; i <= 120; i++) {
+        mockMagnets.push({
+            id: `mag_${i}`,
+            filename: `Film_${String(i).padStart(3, "0")}.2024.1080p.mkv`,
+            size: 1000000000,
+            statusCode: 4
+        });
+    }
+
+    const alldebrid = require("../lib/alldebrid");
+    const originalAdGet = alldebrid.adGet;
+    alldebrid.adGet = async (endpoint) => {
+        if (endpoint.includes("/magnet/status")) {
+            return {
+                data: {
+                    status: "success",
+                    data: { magnets: mockMagnets }
+                }
+            };
+        }
+        return originalAdGet(endpoint);
+    };
+
+    try {
+        // Page 0 (skip=0) sur my_ad_magnets : exactement 50 éléments
+        const p0 = await handleCatalog(mockConfig, "movie", "my_ad_magnets", mockCache, "skip=0");
+        assert.equal(p0.metas.length, 50, "Page 0 doit contenir 50 films");
+        assert.ok(p0.metas[0].name.includes("Film 001"));
+
+        // Page 1 (skip=50) sur l'alias original my_ad_movies : exactement 50 éléments
+        const p1 = await handleCatalog(mockConfig, "movie", "my_ad_movies", mockCache, "skip=50");
+        assert.equal(p1.metas.length, 50, "Page 1 doit contenir 50 films via l'alias my_ad_movies");
+        assert.ok(p1.metas[0].name.includes("Film 051"));
+
+        // Page 2 (skip=100) via query object { skip: "100" } : 20 éléments restants
+        const p2 = await handleCatalog(mockConfig, "movie", "my_ad_magnets", mockCache, { skip: "100" });
+        assert.equal(p2.metas.length, 20, "Page 2 doit contenir les 20 films restants");
+        assert.ok(p2.metas[0].name.includes("Film 101"));
+
+        // Page 3 (skip=150) : 0 élément (fin du catalogue)
+        const p3 = await handleCatalog(mockConfig, "movie", "my_ad_magnets", mockCache, "skip=150");
+        assert.equal(p3.metas.length, 0, "Page 3 au-delà de 120 doit retourner 0 élément");
+    } finally {
+        alldebrid.adGet = originalAdGet;
+    }
+});
+
+test("Playback - History and Links direct unlock for series and movies", async () => {
+    const { handleMeta, handleStream } = require("../lib/stremio");
+
+    const mockCache = { series: {}, movies: {} };
+    const mockConfig = {
+        apiKey: "mock_ad_key",
+        tmdbKey: "default"
+    };
+
+    // 1. handleMeta pour un épisode d'historique (ad_link:...) de type series
+    const directLink = "https://alldebrid.com/dl/dandadan.s01e05.vostfr.1080p.mkv";
+    const adLinkId = `ad_link:${Buffer.from(directLink).toString("base64url")}`;
+
+    const meta = await handleMeta(mockConfig, "series", adLinkId, mockCache);
+    assert.ok(meta.meta);
+    assert.equal(meta.meta.type, "series");
+    assert.ok(Array.isArray(meta.meta.videos), "Les séries de liens doivent inclure la vidéo pour le bouton lecture");
+    assert.equal(meta.meta.videos[0].episode, 5);
+
+    // 2. handleStream pour ce lien direct ad_link:...
+    const streams = await handleStream(mockConfig, "series", adLinkId, mockCache, "http://localhost:3000", "test-user");
+    assert.ok(Array.isArray(streams.streams));
+    assert.ok(streams.streams.length > 0);
+    assert.ok(streams.streams[0].url.includes("resolve"), "Le lien de résolution doit être généré pour ad_link");
+
+    // 3. handleStream pour un film tt... mémorisé dans cache.movies avec link direct
+    mockCache.movies["tt9999999"] = [
+        { link: "https://alldebrid.com/dl/movie_direct.mkv", filename: "Movie Direct 1080p.mkv" }
+    ];
+    const movieStreams = await handleStream(mockConfig, "movie", "tt9999999", mockCache, "http://localhost:3000", "test-user");
+    assert.ok(movieStreams.streams.some(s => s.title.includes("Movie Direct")));
+});

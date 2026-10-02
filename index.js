@@ -624,7 +624,8 @@ app.get("/:uuid/catalog/:type/:id.json", async (req, res) => {
     const config = getUserConfig(req.params.uuid);
     if (!config) return res.status(404).json({ error: "Addon introuvable." });
     try {
-        const result = await handleCatalog(config, req.params.type, req.params.id, cache);
+        const extra = req.query && Object.keys(req.query).length > 0 ? req.query : null;
+        const result = await handleCatalog(config, req.params.type, req.params.id, cache, extra);
         res.json(result);
     } catch (err) {
         console.error(`[Catalog] Erreur ${req.params.id}:`, err.message);
@@ -636,7 +637,9 @@ app.get("/:uuid/catalog/:type/:id/:extra.json", async (req, res) => {
     const config = getUserConfig(req.params.uuid);
     if (!config) return res.status(404).json({ error: "Addon introuvable." });
     try {
-        const result = await handleCatalog(config, req.params.type, req.params.id, cache, req.params.extra);
+        const extraParam = req.params.extra;
+        const extraObj = (req.query && Object.keys(req.query).length > 0) ? { extraParam, ...req.query } : extraParam;
+        const result = await handleCatalog(config, req.params.type, req.params.id, cache, extraObj);
         res.json(result);
     } catch (err) {
         res.json({ metas: [] });
@@ -695,7 +698,8 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/ma
 app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id.json", async (req, res) => {
     const config = parseLegacyConfig(req.params);
     try {
-        const result = await handleCatalog(config, req.params.type, req.params.id, cache);
+        const extra = req.query && Object.keys(req.query).length > 0 ? req.query : null;
+        const result = await handleCatalog(config, req.params.type, req.params.id, cache, extra);
         res.json(result);
     } catch (err) {
         console.error(`[Legacy Catalog] Erreur ${req.params.id}:`, err.message);
@@ -706,7 +710,9 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/ca
 app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id/:extra.json", async (req, res) => {
     const config = parseLegacyConfig(req.params);
     try {
-        const result = await handleCatalog(config, req.params.type, req.params.id, cache, req.params.extra);
+        const extraParam = req.params.extra;
+        const extraObj = (req.query && Object.keys(req.query).length > 0) ? { extraParam, ...req.query } : extraParam;
+        const result = await handleCatalog(config, req.params.type, req.params.id, cache, extraObj);
         res.json(result);
     } catch (err) {
         res.json({ metas: [] });
