@@ -2969,3 +2969,90 @@ test("API Routes - POST /api/user/cleanup-magnets and POST /api/admin/cleanup-ma
     }
 });
 
+test("Prowlarr Categories - Expanded categories cover Cardigann/Torznab standard for Movies, TV, Anime, and RSS sync", async () => {
+    const { PROWLARR_CATEGORIES, formatCategoryParams, searchProwlarrOnDemand, syncProwlarrReleases } = require("../lib/prowlarr-worker");
+    const axios = require("axios");
+
+    // 1. Structure des catégories conformes au standard Cardigann / Torznab
+    assert.ok(PROWLARR_CATEGORIES.MOVIES.includes(2000), "Doit inclure Movies 2000");
+    assert.ok(PROWLARR_CATEGORIES.MOVIES.includes(2010), "Doit inclure Movies/Foreign 2010");
+    assert.ok(PROWLARR_CATEGORIES.MOVIES.includes(2040), "Doit inclure Movies/HD 2040");
+    assert.ok(PROWLARR_CATEGORIES.MOVIES.includes(2045), "Doit inclure Movies/UHD 2045");
+    assert.ok(PROWLARR_CATEGORIES.MOVIES.includes(2080), "Doit inclure Movies/WEB-DL 2080");
+
+    assert.ok(PROWLARR_CATEGORIES.TV.includes(5000), "Doit inclure TV 5000");
+    assert.ok(PROWLARR_CATEGORIES.TV.includes(5010), "Doit inclure TV/WEB-DL 5010");
+    assert.ok(PROWLARR_CATEGORIES.TV.includes(5020), "Doit inclure TV/Foreign 5020");
+    assert.ok(PROWLARR_CATEGORIES.TV.includes(5040), "Doit inclure TV/HD 5040");
+    assert.ok(PROWLARR_CATEGORIES.TV.includes(5045), "Doit inclure TV/UHD 5045");
+    assert.ok(PROWLARR_CATEGORIES.TV.includes(5070), "Doit inclure TV/Anime 5070");
+    assert.ok(PROWLARR_CATEGORIES.TV.includes(5080), "Doit inclure TV/Documentary 5080");
+
+    assert.ok(PROWLARR_CATEGORIES.ANIME.includes(5070), "Anime doit inclure 5070");
+    assert.ok(PROWLARR_CATEGORIES.ANIME.includes(100000), "Anime doit inclure 100000 Custom");
+
+    assert.ok(PROWLARR_CATEGORIES.ALL_VIDEO.length >= 20, "Toutes les catégories vidéo doivent couvrir au moins 20 IDs");
+
+    // 2. Formatage des paramètres URL
+    const formatted = formatCategoryParams([2000, 2040, 5070]);
+    assert.equal(formatted, "categories=2000&categories=2040&categories=5070");
+
+    // 3. Test des appels on-demand pour Film vs Série vs Anime
+    const originalGet = axios.get;
+    let lastUrl = null;
+    axios.get = async (url) => {
+        lastUrl = url;
+        return { data: [] };
+    };
+
+    try {
+        // 3a. Recherche Film : doit contenir 2000, 2040, 2045 (4K), 5070 (Anime)
+        await searchProwlarrOnDemand({
+            id: "tt1375666",
+            type: "movie",
+            cleanTitle: "Inception",
+            prowlarrUrl: "http://mock-prowlarr:9696",
+            prowlarrKey: "mock_key"
+        });
+        assert.ok(lastUrl.includes("categories=2000"), "Film doit interroger 2000");
+        assert.ok(lastUrl.includes("categories=2045"), "Film doit interroger 2045 (4K UHD)");
+        assert.ok(lastUrl.includes("categories=5070"), "Film doit interroger 5070 (pour les films d'animation)");
+
+        // 3b. Recherche Série : doit contenir 5000, 5040, 5045 (4K), 5070 (Anime)
+        await searchProwlarrOnDemand({
+            id: "tt11280740:1:1",
+            type: "series",
+            cleanTitle: "Severance",
+            season: 1,
+            episode: 1,
+            prowlarrUrl: "http://mock-prowlarr:9696",
+            prowlarrKey: "mock_key"
+        });
+        assert.ok(lastUrl.includes("categories=5000"), "Série doit interroger 5000");
+        assert.ok(lastUrl.includes("categories=5045"), "Série doit interroger 5045 (4K UHD)");
+        assert.ok(lastUrl.includes("categories=5070"), "Série doit interroger 5070 (Anime)");
+
+        // 3c. Recherche Anime : doit cibler les catégories d'anime (5070, 100000)
+        await searchProwlarrOnDemand({
+            id: "kitsu:43806",
+            type: "series",
+            cleanTitle: "Jujutsu Kaisen",
+            season: 1,
+            episode: 1,
+            prowlarrUrl: "http://mock-prowlarr:9696",
+            prowlarrKey: "mock_key"
+        });
+        assert.ok(lastUrl.includes("categories=5070"), "Anime doit interroger 5070");
+        assert.ok(lastUrl.includes("categories=100000"), "Anime doit interroger 100000 Custom");
+
+        // 3d. Synchronisation RSS Prowlarr : doit interroger ALL_VIDEO
+        await syncProwlarrReleases("http://mock-prowlarr:9696", "mock_key");
+        assert.ok(lastUrl.includes("categories=2045"), "Sync RSS doit couvrir les films 4K (2045)");
+        assert.ok(lastUrl.includes("categories=5045"), "Sync RSS doit couvrir les séries 4K (5045)");
+        assert.ok(lastUrl.includes("categories=5070"), "Sync RSS doit couvrir les animes (5070)");
+        assert.ok(lastUrl.includes("categories=5080"), "Sync RSS doit couvrir les documentaires (5080)");
+    } finally {
+        axios.get = originalGet;
+    }
+});
+
