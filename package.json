@@ -10,7 +10,10 @@
   "homepage": "https://github.com/D4rk56/Cinecloud#readme",
   "scripts": {
     "start": "node --experimental-sqlite index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "anitomy-js": "^5.4.0",
@@ -19,9 +22,16 @@
     "express-rate-limit": "^8.7.0",
     "proxy-agent": "^8.0.2",
     "socks-proxy-agent": "^10.1.0",
-    "string-similarity": "^4.0.4"
+    "string-similarity": "^4.0.4",
+    "zod": "^4.6.5"
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.9"
   }
 }

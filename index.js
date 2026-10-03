@@ -1,11 +1,15 @@
 "use strict";
 
+const { validateEnv } = require("./lib/env");
+validateEnv();
+
 const express = require("express");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const axios = require("axios");
 const rateLimit = require("express-rate-limit");
+const { secureFilePermissions } = require("./lib/crypto");
 
 const DATA_DIR = path.join(__dirname, "data");
 const ADMIN_PASS_FILE = path.join(DATA_DIR, ".admin_password");
@@ -14,6 +18,9 @@ const ADMIN_PASS_FILE = path.join(DATA_DIR, ".admin_password");
 function resolveAdminPassword() {
     const envPass = process.env.ADMIN_PASSWORD;
     if (envPass && typeof envPass === "string" && envPass.trim() !== "" && envPass !== "admin123") {
+        if (fs.existsSync(ADMIN_PASS_FILE)) {
+            secureFilePermissions(ADMIN_PASS_FILE);
+        }
         return envPass.trim();
     }
 
@@ -23,6 +30,7 @@ function resolveAdminPassword() {
 
     if (fs.existsSync(ADMIN_PASS_FILE)) {
         try {
+            secureFilePermissions(ADMIN_PASS_FILE);
             const saved = fs.readFileSync(ADMIN_PASS_FILE, "utf8").trim();
             if (saved && saved.length >= 8 && saved !== "admin123") {
                 process.env.ADMIN_PASSWORD = saved;
@@ -33,7 +41,8 @@ function resolveAdminPassword() {
 
     const generated = crypto.randomBytes(16).toString("hex");
     try {
-        fs.writeFileSync(ADMIN_PASS_FILE, generated, { mode: 0o600 });
+        fs.writeFileSync(ADMIN_PASS_FILE, generated, { mode: 0o600, encoding: "utf8" });
+        secureFilePermissions(ADMIN_PASS_FILE);
     } catch (e) {}
     process.env.ADMIN_PASSWORD = generated;
     console.log(`[Security] 🔐 Mot de passe administrateur sécurisé généré : ${generated}`);
@@ -71,6 +80,16 @@ const {
 } = require("./lib/db");
 
 const { hashPassword, verifyPassword, encryptConfig, decryptConfig } = require("./lib/crypto");
+const {
+    loginSchema,
+    usersQuerySchema,
+    userDeleteParamsSchema,
+    logsQuerySchema,
+    settingsSchema,
+    cacheClearSchema,
+    cleanupMagnetsSchema,
+    validateAdmin
+} = require("./lib/admin-schemas");
 const { handleManifest, handleCatalog, handleMeta, handleStream } = require("./lib/stremio");
 const { handleResolve } = require("./lib/resolver");
 const { startProwlarrWorker, stopProwlarrWorker } = require("./lib/prowlarr-worker");
@@ -92,7 +111,8 @@ function getRequestProtocol(req) {
 }
 
 // En-tête navigateur par défaut pour les requêtes directes (TMDB, Cinemeta, Lumio)
-axios.defaults.headers.common["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+axios.defaults.headers.common["User-Agent"] = BROWSER_UA;
 
 const app = express();
 const cache = loadCache();
@@ -622,7 +642,7 @@ app.get("/api/stats", (req, res) => {
 // 3. ENDPOINTS DU PANNEAU D'ADMINISTRATION
 // =============================================================================
 
-app.post("/api/admin/login", authLimiter, (req, res) => {
+app.post("/api/admin/login", authLimiter, validateAdmin({ body: loginSchema }), (req, res) => {
     const { password } = req.body;
     let isValid = false;
     if (typeof password === "string" && typeof ADMIN_PASSWORD === "string") {
@@ -659,21 +679,18 @@ app.get("/api/admin/stats", requireAdmin, (req, res) => {
     });
 });
 
-app.get("/api/admin/users", requireAdmin, (req, res) => {
+app.get("/api/admin/users", requireAdmin, validateAdmin({ query: usersQuerySchema }), (req, res) => {
     const sortBy = req.query.sortBy || "newest";
     res.json(getAllUsersAdmin(sortBy));
 });
 
-app.delete("/api/admin/users/:uuid", requireAdmin, (req, res) => {
+app.delete("/api/admin/users/:uuid", requireAdmin, validateAdmin({ params: userDeleteParamsSchema }), (req, res) => {
     const uuid = req.params.uuid;
-    if (!uuid || !/^[a-f0-9\-]{36}$/i.test(uuid)) {
-        return res.status(400).json({ error: "Format UUID invalide." });
-    }
     adminDeleteUser(uuid);
     res.json({ success: true });
 });
 
-app.get("/api/admin/logs", requireAdmin, (req, res) => {
+app.get("/api/admin/logs", requireAdmin, validateAdmin({ query: logsQuerySchema }), (req, res) => {
     const { level, limit, search } = req.query;
     res.json(getLogs({ level, limit, search }));
 });
@@ -687,12 +704,12 @@ app.get("/api/admin/settings", requireAdmin, (req, res) => {
     res.json(getSystemSettings());
 });
 
-app.post("/api/admin/settings", requireAdmin, (req, res) => {
+app.post("/api/admin/settings", requireAdmin, validateAdmin({ body: settingsSchema }), (req, res) => {
     const updated = updateSystemSettings(req.body);
     res.json({ success: true, settings: updated });
 });
 
-app.post("/api/admin/cache/clear", requireAdmin, adminActionLimiter, (req, res) => {
+app.post("/api/admin/cache/clear", requireAdmin, adminActionLimiter, validateAdmin({ body: cacheClearSchema }), (req, res) => {
     const { target } = req.body;
     let cleared = 0;
     if (target === "torrents" || target === "all") {
@@ -798,7 +815,7 @@ app.post(["/api/admin/prowlarr/sync", "/api/admin/maintenance/sync-prowlarr"], r
 });
 
 // Purge globale des magnets AllDebrid bloqués
-app.post("/api/admin/cleanup-magnets", requireAdmin, adminActionLimiter, async (req, res) => {
+app.post("/api/admin/cleanup-magnets", requireAdmin, adminActionLimiter, validateAdmin({ body: cleanupMagnetsSchema }), async (req, res) => {
     try {
         const { apiKey } = req.body || {};
         if (apiKey) {

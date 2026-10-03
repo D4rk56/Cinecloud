@@ -1,0 +1,69 @@
+# Politique de Sécurité — CinéCloud FR
+
+La sécurité et la confidentialité des utilisateurs de **CinéCloud FR** sont des priorités absolues. Ce document décrit notre politique de sécurité, les mesures architecturales mises en œuvre, et la procédure de signalement responsable de vulnérabilités.
+
+---
+
+## 1. Versions Supportées
+
+Nous fournissons activement des correctifs de sécurité pour les versions suivantes :
+
+| Version | Statut |
+| :--- | :--- |
+| **2.4.x** (Actuelle) | :white_check_mark: Support actif (mises à jour de sécurité et correctifs) |
+| **2.x** | :white_check_mark: Support des correctifs critiques |
+| **< 2.0** | :x: Fin de vie (non supporté) |
+
+Nous encourageons l'ensemble des administrateurs d'instances à déployer la dernière version disponible (`ghcr.io/d4rk5/cinecloud:latest`).
+
+---
+
+## 2. Modèle de Menace & Protections Intégrées
+
+CinéCloud FR est conçu selon le principe de **défense en profondeur** (*defense-in-depth*) :
+
+### A. Chiffrement au repos des identifiants (AES-256-GCM)
+- Les clés API tierces (AllDebrid, Torbox, Prowlarr) fournies par les utilisateurs ne sont **jamais stockées en clair** dans la base SQLite (`nuvio.db`).
+- Elles sont systématiquement chiffrées avec **AES-256-GCM** avec vecteur d'initialisation unique (IV) et tag d'authentification cryptographique généré via l'API native `node:crypto`.
+- La clé de chiffrement principale (`APP_SECRET`) est soit injectée par l'administrateur, soit auto-générée au premier démarrage dans `data/.app_secret` avec un caractère aléatoire cryptographique fort (32 octets).
+
+### B. Durcissement des permissions de fichiers (0600 / ACL Windows)
+- Les fichiers contenant des secrets critiques (`data/.app_secret` et `data/.admin_password`) sont protégés avec des permissions strictes :
+  - **POSIX (Linux, Docker, macOS)** : permissions `0600` (`-rw-------`), accessibles uniquement par l'utilisateur du processus (non-root `node` en conteneur Docker).
+  - **Windows** : permissions restreintes à l'utilisateur courant via `icacls` avec suppression de l'héritage d'accès.
+
+### C. Validation stricte des entrées (Zod)
+- Les variables d'environnement sont validées au démarrage (**fail-fast**) via `lib/env.js` afin d'empêcher tout démarrage avec des paramètres corrompus ou des secrets par défaut vulnérables.
+- L'ensemble des routes d'administration (`/api/admin/*`) appliquent des schémas de validation stricts via **Zod** (`lib/admin-schemas.js`), prévenant les injections, les pollutions de paramètres et les données malformées.
+
+### D. Protection contre les attaques temporelles (*Timing Attacks*)
+- Les comparaisons de mots de passe administrateur et de hachages utilisateurs sont réalisées via `crypto.timingSafeEqual` pour empêcher l'analyse différentielle de temps de réponse.
+- Le hachage des mots de passe utilisateurs utilise l'algorithme standard **scrypt** avec sel cryptographique aléatoire de 16 octets (`crypto.scryptSync`).
+
+### E. Politique CORS stricte & Isolation des requêtes
+- Les routes publiques Stremio (`/manifest.json`, `/catalog/*`, `/stream/*`) autorisent les clients Stremio Web et applications tierces.
+- Les routes sensibles (`/api/*` et `/api/admin/*`) appliquent un contrôle d'origine strict (`Origin` / `Referer`) pour bloquer les requêtes de sites web tiers malveillants (*Cross-Site Request Forgery / CSRF*).
+
+### F. Limitation de débit (*Rate Limiting*)
+- Des limiteurs de débit dédiés (`express-rate-limit`) protègent les surfaces sensibles contre les attaques par force brute et par déni de service (DoS) :
+  - Connexion administrateur (`authLimiter` : 5 tentatives / 15 min)
+  - Sondes et vérifications de clés (`apiCheckLimiter` : 10 requêtes / min)
+  - Résolution de flux (`resolveLimiter` : 60 requêtes / min)
+  - Maintenance & actions admin (`adminActionLimiter` : 30 requêtes / min)
+
+---
+
+## 3. Signalement Responsable de Vulnérabilité
+
+Si vous découvrez une faille de sécurité dans CinéCloud FR, **merci de ne pas ouvrir d'issue publique sur GitHub**.
+
+### Procédure de signalement :
+1. Utilisez les [Advisories de Sécurité GitHub](https://github.com/D4rk56/Cinecloud/security/advisories/new) pour soumettre un rapport privé et confidentiel.
+2. Décrivez avec précision la vulnérabilité observée :
+   - Type de vulnérabilité (ex: injection, fuite de mémoire, contournement d'authentification)
+   - Étapes claires de reproduction (PoC / commande curl / script)
+   - Impact potentiel estimé
+3. **Engagements de l'équipe :**
+   - **Accusé de réception sous 48 heures ouvrées**.
+   - Analyse et échange direct pour convenir d'un correctif.
+   - Publication coordonnée d'un avis de sécurité et d'une nouvelle version corrective sous forme de release taggée.
