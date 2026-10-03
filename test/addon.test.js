@@ -1141,10 +1141,35 @@ test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagn
     assert.equal(emptyRes.success, false);
     assert.equal(emptyRes.valid, false);
 
-    // 1b. Garde SSRF : refus des hôtes privés/loopback
-    const ssrfRes = await checkProwlarrConnectivity("http://127.0.0.1:9696", "test_key");
-    assert.equal(ssrfRes.success, false);
-    assert.ok(ssrfRes.error.includes("refusée"), "Doit bloquer un hôte loopback (SSRF)");
+    // 1b. Garde SSRF : les services auto-hébergés (prowlarr:9696, loopback, LAN) sont autorisés,
+    //     seules les cibles dangereuses (link-local / métadonnées cloud) sont refusées.
+    const metadataRes = await checkProwlarrConnectivity("http://169.254.169.254", "test_key");
+    assert.equal(metadataRes.success, false);
+    assert.ok(metadataRes.error.includes("refusée"), "Doit bloquer l'adresse de métadonnées cloud (SSRF)");
+
+    assert.equal(
+        (await netGuard.assertSafeSelfHostedUrl("http://127.0.0.1:9696")).ok,
+        true,
+        "Le loopback doit rester autorisé (Prowlarr local / host.docker.internal)"
+    );
+    assert.equal(
+        (await netGuard.assertSafeSelfHostedUrl("http://prowlarr:9696")).ok,
+        true,
+        "Un nom d'hôte interne (prowlarr) doit rester autorisé"
+    );
+    assert.equal(
+        (await netGuard.assertSafeSelfHostedUrl("http://169.254.169.254")).ok,
+        false,
+        "Les métadonnées cloud doivent être refusées"
+    );
+
+    // Régression : le Prowlarr interne par défaut (prowlarr:9696) ne doit PAS être refusé par la garde.
+    const internalHostRes = await checkProwlarrConnectivity("http://prowlarr:9696", "test_key");
+    assert.equal(internalHostRes.success, false);
+    assert.ok(
+        !internalHostRes.error.includes("refusée"),
+        "Un Prowlarr interne (prowlarr:9696) ne doit pas être bloqué par la garde SSRF"
+    );
 
     // 2. Diagnostic d'hôte introuvable
     const notFoundRes = await checkProwlarrConnectivity("http://prowlarr-inexistant-test:9696", "test_key");
@@ -1182,10 +1207,10 @@ test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagn
     const port = server.address().port;
     const baseUrl = `http://127.0.0.1:${port}`;
 
-    // Neutralise la garde SSRF pour tester la logique de diagnostic contre le serveur mock local (loopback).
-    // La garde SSRF elle-même est vérifiée en 1b.
-    const originalGuard = netGuard.assertSafePublicUrl;
-    netGuard.assertSafePublicUrl = async () => ({ ok: true });
+    // Neutralise la garde SSRF pour tester la logique de diagnostic contre le serveur mock local.
+    // La garde SSRF elle-même (loopback autorisé, métadonnées refusées) est vérifiée en 1b.
+    const originalGuard = netGuard.assertSafeSelfHostedUrl;
+    netGuard.assertSafeSelfHostedUrl = async () => ({ ok: true });
 
     try {
         // Test 3a : Instance standard à la racine
@@ -1227,7 +1252,7 @@ test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagn
         assert.ok(cfRes.error.includes("Cloudflare 1033"), "Doit diagnostiquer l'erreur Cloudflare 1033");
     } finally {
         server.close();
-        netGuard.assertSafePublicUrl = originalGuard;
+        netGuard.assertSafeSelfHostedUrl = originalGuard;
     }
 });
 

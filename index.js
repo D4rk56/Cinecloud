@@ -101,7 +101,7 @@ const alldebrid = require("./lib/alldebrid");
 const { getWarpStatus, checkAllDebridKey } = alldebrid;
 const { LOGO_SVG, BACKGROUND_SVG, renderConfigPage, renderAdminPage } = require("./lib/ui");
 const { loadAnimeMapping } = require("./lib/animeMapping");
-const { assertSafePublicUrl, isPrivateUrl } = require("./lib/net-guard");
+const { assertSafeSelfHostedUrl, isForbiddenTargetUrl } = require("./lib/net-guard");
 
 // Initialisation et indexation mémoire de la table communautaire Fribb anime-lists au boot
 loadAnimeMapping().catch(err => console.warn("[Server] AnimeMapping non disponible :", err.message));
@@ -381,10 +381,13 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
                   : ALL_CATALOGS.map(c => c.id)
         };
 
-        // Garde SSRF de second ordre : refuser les URL Prowlarr privées explicites (IP privée/loopback)
+        // Garde SSRF de second ordre : autorise les services auto-hébergés (prowlarr:9696,
+        // host.docker.internal, LAN) mais refuse les cibles dangereuses (link-local/métadonnées).
         if (configData.prowlarrKey && configData.prowlarrKey.trim() && configData.prowlarrKey !== "off") {
-            if (isPrivateUrl(configData.prowlarrUrl)) {
-                return res.status(400).json({ error: "L'URL Prowlarr pointe vers un hôte privé ou réservé, non autorisé." });
+            if (isForbiddenTargetUrl(configData.prowlarrUrl)) {
+                return res
+                    .status(400)
+                    .json({ error: "L'URL Prowlarr pointe vers une cible interdite (link-local / métadonnées)." });
             }
         }
 
@@ -580,10 +583,13 @@ app.post("/api/user/update", authLimiter, (req, res) => {
                   : currentConfig.enabledCatalogs
         };
 
-        // Garde SSRF de second ordre : refuser les URL Prowlarr privées explicites (IP privée/loopback)
+        // Garde SSRF de second ordre : autorise les services auto-hébergés (prowlarr:9696,
+        // host.docker.internal, LAN) mais refuse les cibles dangereuses (link-local/métadonnées).
         if (updatedConfig.prowlarrKey && updatedConfig.prowlarrKey.trim() && updatedConfig.prowlarrKey !== "off") {
-            if (isPrivateUrl(updatedConfig.prowlarrUrl)) {
-                return res.status(400).json({ error: "L'URL Prowlarr pointe vers un hôte privé ou réservé, non autorisé." });
+            if (isForbiddenTargetUrl(updatedConfig.prowlarrUrl)) {
+                return res
+                    .status(400)
+                    .json({ error: "L'URL Prowlarr pointe vers une cible interdite (link-local / métadonnées)." });
             }
         }
 
@@ -626,8 +632,9 @@ app.post("/api/check/lumio", apiCheckLimiter, async (req, res) => {
         raw = raw.replace(/\/+$/, "") + "/manifest.json";
     }
 
-    // Garde SSRF : refuser tout hôte privé / loopback / link-local / métadonnées (avec résolution DNS)
-    const ssrfCheck = await assertSafePublicUrl(raw);
+    // Garde SSRF : autorise les services auto-hébergés mais refuse les cibles dangereuses
+    // (link-local / métadonnées cloud, non spécifiée, multicast, réservée).
+    const ssrfCheck = await assertSafeSelfHostedUrl(raw);
     if (!ssrfCheck.ok) {
         return res.json({ success: false, valid: false, error: `URL Lumio refusée (sécurité) : ${ssrfCheck.error}` });
     }

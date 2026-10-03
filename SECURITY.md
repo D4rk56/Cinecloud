@@ -59,10 +59,17 @@ CinéCloud FR est conçu selon le principe de **défense en profondeur** (_defen
 
 ### G. Protection SSRF & confiance proxy
 
-- Un garde-fou réseau dédié (`lib/net-guard.js`) bloque les requêtes sortantes vers les hôtes
-  privés, loopback, link-local, adresses de métadonnées cloud (`169.254.0.0/16`) et réservées,
-  avec résolution DNS pour contrer le rebinding. Il est appliqué aux sondes
-  `/api/check/prowlarr` et `/api/check/lumio`, ainsi qu'à la validation des URL Prowlarr partagées.
+- Un garde-fou réseau dédié (`lib/net-guard.js`) protège les requêtes sortantes déclenchées par
+  l'utilisateur. Il **autorise les adresses privées/loopback** (indispensables aux services
+  auto-hébergés : `prowlarr:9696`, `host.docker.internal`, LAN, `127.0.0.1`) mais **bloque les
+  cibles dangereuses** : link-local et métadonnées cloud (`169.254.0.0/16`, dont
+  `169.254.169.254`), adresses non spécifiées, multicast et réservées — y compris après
+  résolution DNS (anti DNS-rebinding). Il est appliqué aux sondes `/api/check/prowlarr` et
+  `/api/check/lumio`, ainsi qu'à la validation des URL Prowlarr partagées.
+- Pour les instances **exposées publiquement** (tunnel/Internet) où le test de connectivité
+  Prowlarr n'est pas nécessaire à des tiers, il est recommandé de restreindre l'accès aux
+  endpoints `/api/check/*` (reverse proxy, authentification amont) : ils permettent par nature
+  de faire sonder un service interne à l'instance.
 - La confiance accordée aux en-têtes `X-Forwarded-*` est désactivée par défaut (`TRUST_PROXY=false`) :
   `req.ip` correspond alors à l'adresse socket réelle, non falsifiable. Elle ne doit être activée
   (`TRUST_PROXY=1`) que derrière un reverse proxy / tunnel de confiance.
