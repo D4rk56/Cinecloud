@@ -3056,3 +3056,66 @@ test("Prowlarr Categories - Expanded categories cover Cardigann/Torznab standard
     }
 });
 
+test("Lioness, Long Titles, Anime Romaji, and Prowlarr Hash Extraction", async () => {
+    const { isConfidentTitleMatch, extractCleanTitle, hasNonLatinCharacters } = require("../lib/helpers");
+    const { extractReleaseHash, base32ToHex } = require("../lib/prowlarr-worker");
+    const { handleCatalog } = require("../lib/stremio");
+
+    // 1. Lioness vs Indian Special OPS mapping
+    assert.strictEqual(isConfidentTitleMatch("Special Ops Lioness", "Lioness"), true, "Special Ops Lioness doit matcher Lioness");
+    assert.strictEqual(isConfidentTitleMatch("Special Ops Lioness", "Special OPS"), false, "Special Ops Lioness ne doit JAMAIS matcher Special OPS seul");
+    assert.strictEqual(isConfidentTitleMatch("Lionnes", "Special Ops Lioness"), true, "Recherche 'Lionnes' doit matcher 'Special Ops Lioness'");
+    assert.strictEqual(isConfidentTitleMatch("Lionnes", "Lioness"), true, "Recherche 'Lionnes' doit matcher 'Lioness'");
+    assert.strictEqual(isConfidentTitleMatch("Lionnes", "Operations Speciales"), false, "Recherche 'Lionnes' ne doit pas matcher 'Operations Speciales' seul");
+    assert.strictEqual(isConfidentTitleMatch("Special Ops Lioness", "Opérations Spéciales : Lioness"), true, "Titre US doit matcher titre FR");
+
+    // 2. Nettoyage et extraction de titre pour Special Ops Lioness
+    const cleanLioness = extractCleanTitle("Special.Ops.Lioness.S01E01.MULTI.1080p.WEB-DL.mkv");
+    assert.strictEqual(cleanLioness.title, "Special Ops Lioness");
+    assert.strictEqual(cleanLioness.altTitle, "Lioness");
+
+    const cleanOpSpec = extractCleanTitle("Operations.Speciales.Lioness.S02E03.VF.mkv");
+    assert.strictEqual(cleanOpSpec.title, "Operations Speciales Lioness");
+    assert.strictEqual(cleanOpSpec.altTitle, "Lioness");
+
+    // 3. Titres à rallonge et anime
+    const cleanShangri = extractCleanTitle("Shangri-La Frontier - Kusoge Hunter, Kamige ni Idoman to su S01E01.mkv");
+    assert.strictEqual(cleanShangri.title, "Shangri-La Frontier");
+    assert.ok(isConfidentTitleMatch("Shangri La Frontier Kusoge Hunter Kamige ni Idoman to su", "Shangri-La Frontier"), "Titre à rallonge doit matcher le titre officiel");
+
+    // 4. Détection des caractères non-latins (Devanagari, Hindi, Cyrillique, etc.)
+    assert.strictEqual(hasNonLatinCharacters("स्पेशल ऑप्स"), true, "Devanagari hindi doit être détecté comme non-latin");
+    assert.strictEqual(hasNonLatinCharacters("Opérations Spéciales : Lioness"), false, "Français avec accents est du latin pur");
+    assert.strictEqual(hasNonLatinCharacters("Special Ops: Lioness"), false, "Anglais est du latin pur");
+
+    // 5. Extraction universelle de hash Prowlarr
+    // 5a. Hex 40 direct
+    const relHex = { infoHash: "d3b07384d113edec49eaa6238ad5ff0012345678" };
+    assert.strictEqual(extractReleaseHash(relHex), "d3b07384d113edec49eaa6238ad5ff0012345678");
+
+    // 5b. Base32 (32 caractères)
+    const b32 = "2OQWGBWRCPW6YSVKUYRYVVX7AAMPXFNE";
+    const converted = base32ToHex(b32);
+    assert.strictEqual(converted.length, 40);
+    const relB32 = { infoHash: b32 };
+    assert.strictEqual(extractReleaseHash(relB32), converted);
+
+    // 5c. infoHash null mais présent dans magnetUrl (fréquent sur trackers FR)
+    const relMagnet = { infoHash: null, magnetUrl: "magnet:?xt=urn:btih:d3b07384d113edec49eaa6238ad5ff0012345678&dn=Lioness" };
+    assert.strictEqual(extractReleaseHash(relMagnet), "d3b07384d113edec49eaa6238ad5ff0012345678");
+
+    // 5d. infoHash null mais présent dans downloadUrl
+    const relDown = { infoHash: null, downloadUrl: "magnet:?xt=urn:btih:d3b07384d113edec49eaa6238ad5ff0012345678" };
+    assert.strictEqual(extractReleaseHash(relDown), "d3b07384d113edec49eaa6238ad5ff0012345678");
+
+    // 6. extra.search dans handleCatalog
+    const mockCache = {
+        series: {
+            "lioness": { groupTitle: "lioness", episodes: [{ season: 1, episode: 1, filename: "Lioness.S01E01.mkv" }] },
+            "severance": { groupTitle: "severance", episodes: [{ season: 1, episode: 1, filename: "Severance.S01E01.mkv" }] }
+        }
+    };
+    const catalogFiltered = await handleCatalog({ apiKey: "mock" }, "series", "my_ad_history_series", mockCache, "search=Lionnes");
+    assert.ok(catalogFiltered && Array.isArray(catalogFiltered.metas));
+});
+
