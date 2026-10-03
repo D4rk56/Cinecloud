@@ -965,7 +965,7 @@ test("UI - Client script in renderConfigPage and renderAdminPage compiles withou
     }, "Le script client de renderAdminPage doit compiler sans aucune erreur de syntaxe");
 });
 
-test("Helpers - formatAioStream handles isInstant with ⚡ and ⏳ badges", () => {
+test("Helpers - formatAioStream handles isInstant with ⚡, 🔍 and ⏳ badges", () => {
     const { formatAioStream } = require("../lib/helpers");
 
     // Flux instantané (isInstant: true)
@@ -981,12 +981,27 @@ test("Helpers - formatAioStream handles isInstant with ⚡ and ⏳ badges", () =
     assert.ok(!instantStream.name.includes("[AD ⏳]"), "Ne doit pas inclure [AD ⏳]");
     assert.ok(instantStream.title.includes("⚡ Instantané AllDebrid"), "Doit inclure le statut instantané");
 
-    // Flux en cours de téléchargement (isInstant: false)
-    const downloadStream = formatAioStream({
+    // Flux Prowlarr non confirmé en cache (isInstant: false, indexer: Prowlarr) -> Badge [AD 🔍]
+    const prowlarrStream = formatAioStream({
         filename: "Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv",
         sizeBytes: 4500000000,
         provider: "Cinécloud",
         indexer: "Prowlarr",
+        seeders: 42,
+        isInstant: false,
+        url: "http://example.com/stream"
+    });
+    assert.ok(prowlarrStream.name.includes("[AD 🔍]"), "Prowlarr non confirmé doit porter le badge [AD 🔍]");
+    assert.ok(!prowlarrStream.name.includes("[AD ⏳]"), "Ne doit pas inclure [AD ⏳]");
+    assert.ok(!prowlarrStream.name.includes("[AD ⚡]"), "Ne doit pas inclure [AD ⚡]");
+    assert.ok(prowlarrStream.title.includes("42 seeders"), "Doit afficher le nombre de seeders");
+    assert.ok(prowlarrStream.title.includes("Vérif. cache au clic"), "Doit indiquer la vérification au clic");
+
+    // Flux en cours de téléchargement standard sans Prowlarr -> Badge [AD ⏳]
+    const downloadStream = formatAioStream({
+        filename: "Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv",
+        sizeBytes: 4500000000,
+        provider: "Cinécloud",
         subtitle: "Téléchargement (42 seeders)",
         isInstant: false,
         url: "http://example.com/stream"
@@ -3208,5 +3223,56 @@ test("Docker compose volume consistency, Prowlarr on-demand stream display, and 
         axios.get = originalGet;
     }
 });
+
+test("Stream Prioritization - Instant streams are placed at top, and Prowlarr streams display [AD 🔍] and sort by seeders", () => {
+    const { formatAioStream, filterAndSortStreams } = require("../lib/helpers");
+
+    const instantStream = formatAioStream({
+        filename: "Special.Ops.Lioness.S01E01.1080p.WEB.H264-FW.mkv",
+        sizeBytes: 2500000000,
+        provider: "Cinécloud",
+        indexer: "Prowlarr | YggTorrent",
+        isInstant: true,
+        cacheType: "global",
+        debridProvider: "alldebrid"
+    });
+
+    const unconfirmedHighSeeders = formatAioStream({
+        filename: "Special.Ops.Lioness.S01E01.FRENCH.1080p.WEB.H264-FW.mkv",
+        sizeBytes: 2400000000,
+        seeders: 55,
+        provider: "Cinécloud",
+        indexer: "Prowlarr | Sharewood",
+        isInstant: false,
+        cacheType: "direct",
+        debridProvider: "alldebrid"
+    });
+
+    const unconfirmedLowSeeders = formatAioStream({
+        filename: "Special.Ops.Lioness.S01E01.FRENCH.1080p.WEB.H264-LOW.mkv",
+        sizeBytes: 2300000000,
+        seeders: 3,
+        provider: "Cinécloud",
+        indexer: "Prowlarr | Torrent9",
+        isInstant: false,
+        cacheType: "direct",
+        debridProvider: "alldebrid"
+    });
+
+    // Vérification des badges
+    assert.ok(instantStream.name.includes("[AD ⚡ Cache Global]"), "Le flux instantané doit porter le badge [AD ⚡ Cache Global]");
+    assert.ok(unconfirmedHighSeeders.name.includes("[AD 🔍]"), "Le flux Prowlarr non confirmé doit porter le badge [AD 🔍]");
+    assert.ok(unconfirmedHighSeeders.title.includes("55 seeders"), "Le sous-titre doit mentionner le nombre de seeders");
+    assert.ok(unconfirmedHighSeeders.title.includes("Vérif. cache au clic"), "Le sous-titre doit indiquer la vérification au clic");
+
+    // Tri des flux : flux instantané en premier, puis tri par seeders pour les flux Prowlarr directs
+    const sorted = filterAndSortStreams([unconfirmedLowSeeders, unconfirmedHighSeeders, instantStream]);
+
+    assert.equal(sorted.length, 3);
+    assert.ok(sorted[0].name.includes("⚡"), "Le premier flux doit être le flux instantané ⚡");
+    assert.equal(sorted[1]._seeders, 55, "Le deuxième flux doit être celui avec le plus de seeders (55)");
+    assert.equal(sorted[2]._seeders, 3, "Le troisième flux doit être celui avec le moins de seeders (3)");
+});
+
 
 
