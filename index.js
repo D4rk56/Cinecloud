@@ -186,6 +186,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             prowlarrKey: (prowlarrKey && prowlarrKey.trim()) || "off",
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: Boolean(allowDownload),
+            preValidateCache: req.body.preValidateCache !== undefined ? Boolean(req.body.preValidateCache) : true,
             disableCatalogs: Boolean(disableCatalogs),
             lumioUrl: (req.body.lumioUrl && req.body.lumioUrl.trim()) || "",
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : ALL_CATALOGS.map(c => c.id))
@@ -252,6 +253,7 @@ app.post("/api/user/login", authLimiter, (req, res) => {
                 prowlarrKey: config.prowlarrKey || "",
                 prowlarrMode: user.prowlarrMode || config.prowlarrMode || "local",
                 allowDownload: Boolean(config.allowDownload),
+                preValidateCache: config.preValidateCache !== false,
                 disableCatalogs: Boolean(config.disableCatalogs),
                 lumioUrl: config.lumioUrl || "",
                 maxSizeGb: config.maxSizeGb !== undefined ? config.maxSizeGb : 150,
@@ -326,6 +328,7 @@ app.post("/api/user/update", authLimiter, (req, res) => {
             prowlarrKey: (prowlarrKey && typeof prowlarrKey === "string" && prowlarrKey.trim()) ? prowlarrKey.trim() : (currentConfig.prowlarrKey || "off"),
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: allowDownload !== undefined ? Boolean(allowDownload) : Boolean(currentConfig.allowDownload),
+            preValidateCache: req.body.preValidateCache !== undefined ? Boolean(req.body.preValidateCache) : (currentConfig.preValidateCache !== false),
             disableCatalogs: disableCatalogs !== undefined ? Boolean(disableCatalogs) : Boolean(currentConfig.disableCatalogs),
             lumioUrl: req.body.lumioUrl !== undefined ? (req.body.lumioUrl ? req.body.lumioUrl.trim() : "") : (currentConfig.lumioUrl || ""),
             enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : currentConfig.enabledCatalogs)

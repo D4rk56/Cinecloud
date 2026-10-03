@@ -3274,5 +3274,205 @@ test("Stream Prioritization - Instant streams are placed at top, and Prowlarr st
     assert.equal(sorted[2]._seeders, 3, "Le troisième flux doit être celui avec le moins de seeders (3)");
 });
 
+test("AllDebrid - preValidateMagnets uploads batch, marks ready in cache, and immediately deletes unready", async () => {
+    const alldebrid = require("../lib/alldebrid");
+    const { preValidateMagnets, instantCacheLRU } = alldebrid;
+
+    // Reset LRU
+    if (instantCacheLRU && instantCacheLRU.clear) instantCacheLRU.clear();
+
+    const originalPost = alldebrid.adPost;
+    const originalDelete = alldebrid.deleteMagnet;
+
+    let uploadPayload = null;
+    const deletedIds = [];
+
+    alldebrid.adPost = async (endpoint, apiKey, data) => {
+        if (endpoint === "/v4/magnet/upload") {
+            uploadPayload = data;
+            return {
+                data: {
+                    status: "success",
+                    data: {
+                        magnets: [
+                            {
+                                id: 501,
+                                hash: "aaaa111122223333444455556666777788889999",
+                                ready: true,
+                                name: "Cached Movie 1080p",
+                                size: 2500000000
+                            },
+                            {
+                                id: 502,
+                                hash: "bbbb111122223333444455556666777788889999",
+                                ready: false,
+                                name: "Uncached Movie 1080p",
+                                size: 3000000000
+                            }
+                        ]
+                    }
+                }
+            };
+        }
+        return { data: { status: "error" } };
+    };
+
+    alldebrid.deleteMagnet = async (id, apiKey) => {
+        deletedIds.push(id);
+        return true;
+    };
+
+    try {
+        const torrents = [
+            {
+                infoHash: "aaaa111122223333444455556666777788889999",
+                title: "Cached Movie 1080p",
+                size: 2500000000,
+                seeders: 50
+            },
+            {
+                infoHash: "bbbb111122223333444455556666777788889999",
+                title: "Uncached Movie 1080p",
+                size: 3000000000,
+                seeders: 10
+            }
+        ];
+
+        const map = await preValidateMagnets(torrents, "mock_ad_key", { maxProbes: 5, imdbId: "tt1234567" });
+
+        assert.ok(uploadPayload, "Doit appeler /v4/magnet/upload");
+        assert.equal(uploadPayload.magnets.length, 2, "Doit envoyer 2 magnets");
+        assert.equal(map["aaaa111122223333444455556666777788889999"], true, "Hash 1 doit être ready (true)");
+        assert.equal(map["bbbb111122223333444455556666777788889999"], false, "Hash 2 doit être non prêt (false)");
+        assert.ok(deletedIds.includes(502), "Le magnet non en cache 502 doit être immédiatement supprimé");
+        assert.ok(!deletedIds.includes(501), "Le magnet prêt 501 ne doit pas être supprimé");
+
+        // Deuxième appel : doit être servi directement depuis le cache LRU sans refaire d'upload
+        uploadPayload = null;
+        const cachedMap = await preValidateMagnets(torrents, "mock_ad_key", { maxProbes: 5 });
+        assert.equal(uploadPayload, null, "Ne doit pas refaire de requête HTTP pour les hashes déjà en cache LRU");
+        assert.equal(cachedMap["aaaa111122223333444455556666777788889999"], true);
+        assert.equal(cachedMap["bbbb111122223333444455556666777788889999"], false);
+    } finally {
+        alldebrid.adPost = originalPost;
+        alldebrid.deleteMagnet = originalDelete;
+    }
+});
+
+test("Stremio Streams - handleStream with active AllDebrid pre-validation displays [AD ⚡] for cached and [AD ⏳] for uncached", async () => {
+    const { handleStream } = require("../lib/stremio");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+
+    const originalPost = alldebrid.adPost;
+    const originalDelete = alldebrid.deleteMagnet;
+    const originalGet = axios.get;
+
+    const { deleteCachedTorrent } = require("../lib/db");
+    deleteCachedTorrent("cccc111122223333444455556666777788889999");
+    deleteCachedTorrent("dddd111122223333444455556666777788889999");
+
+    // Reset LRU
+    if (alldebrid.instantCacheLRU && alldebrid.instantCacheLRU.clear) alldebrid.instantCacheLRU.clear();
+
+    alldebrid.adPost = async (endpoint, apiKey, data) => {
+        if (endpoint === "/v4/magnet/upload") {
+            return {
+                data: {
+                    status: "success",
+                    data: {
+                        magnets: [
+                            {
+                                id: 601,
+                                hash: "cccc111122223333444455556666777788889999",
+                                ready: true
+                            },
+                            {
+                                id: 602,
+                                hash: "dddd111122223333444455556666777788889999",
+                                ready: false
+                            }
+                        ]
+                    }
+                }
+            };
+        }
+        return { data: { status: "error" } };
+    };
+    alldebrid.deleteMagnet = async () => true;
+
+    axios.get = async (url) => {
+        if (url && typeof url === "string" && url.includes("/api/v1/search")) {
+            return {
+                data: [
+                    {
+                        title: "Test.Movie.2024.1080p.WEB-READY",
+                        infoHash: "cccc111122223333444455556666777788889999",
+                        size: 2500000000,
+                        indexer: "YggTorrent",
+                        seeders: 45
+                    },
+                    {
+                        title: "Test.Movie.2024.1080p.WEB-UNREADY",
+                        infoHash: "dddd111122223333444455556666777788889999",
+                        size: 2400000000,
+                        indexer: "Sharewood",
+                        seeders: 12
+                    }
+                ]
+            };
+        }
+        if (url && typeof url === "string" && url.includes("cinemeta.strem.io/meta/movie")) {
+            return {
+                data: {
+                    meta: {
+                        id: "tt8888888",
+                        name: "Test Movie",
+                        year: 2024
+                    }
+                }
+            };
+        }
+        return { data: { streams: [] } };
+    };
+
+    try {
+        const res = await handleStream(
+            {
+                apiKey: "mock_ad_key",
+                prowlarrUrl: "http://mock-prowlarr:9696",
+                prowlarrKey: "mock_key",
+                prowlarrMode: "direct",
+                preValidateCache: true,
+                allowDownload: false
+            },
+            "movie",
+            "tt8888888",
+            {},
+            "http://localhost:3000",
+            "mock-user"
+        );
+
+        assert.ok(res && Array.isArray(res.streams));
+        const readyStream = res.streams.find(s => s.url.includes("cccc111122223333444455556666777788889999"));
+        const unreadyStream = res.streams.find(s => s.url.includes("dddd111122223333444455556666777788889999"));
+
+        assert.ok(readyStream, "Le flux ready doit être présent");
+        assert.ok(readyStream.name.includes("⚡"), "Le flux ready doit porter l'éclair ⚡");
+        assert.ok(readyStream.title.includes("Instantané") || readyStream.title.includes("Pré-cache"), "Le statut ready doit être instantané");
+
+        assert.ok(unreadyStream, "Le flux unready doit être présent");
+        assert.ok(unreadyStream.name.includes("⏳"), "Le flux unready doit porter le sablier ⏳");
+        assert.ok(unreadyStream.title.includes("Téléchargement (12 seeders)"), "Le statut unready doit indiquer Téléchargement avec seeders");
+    } finally {
+        deleteCachedTorrent("cccc111122223333444455556666777788889999");
+        deleteCachedTorrent("dddd111122223333444455556666777788889999");
+        alldebrid.adPost = originalPost;
+        alldebrid.deleteMagnet = originalDelete;
+        axios.get = originalGet;
+    }
+});
+
+
 
 
