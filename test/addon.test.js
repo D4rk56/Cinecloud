@@ -181,28 +181,68 @@ test("Database - Cached torrents upsert, retrieval and purge", () => {
 
 test("Helpers - imdbIdToTitle handles series and movies with Cinemeta fallback", async () => {
     const { imdbIdToTitle } = require("../lib/helpers");
+    const axios = require("axios");
+    const originalGet = axios.get;
 
-    // Breaking Bad (série)
-    const seriesTitle = await imdbIdToTitle("tt0903747", null, "series");
-    assert.ok(seriesTitle, "Doit trouver un titre pour la série");
-    assert.match(seriesTitle, /Breaking Bad/i, "Doit être Breaking Bad et non le film Mirror");
+    // Mock du réseau Cinemeta : le CI n'a pas d'accès externe fiable (sinon timeout 4s → échec).
+    axios.get = async url => {
+        const u = typeof url === "string" ? url : "";
+        if (u.includes("/meta/series/tt0903747.json")) {
+            return { data: { meta: { name: "Breaking Bad", year: "2008" } } };
+        }
+        if (u.includes("/meta/movie/tt1375666.json")) {
+            return { data: { meta: { name: "Inception", year: "2010" } } };
+        }
+        return { data: {} };
+    };
 
-    // Inception (film)
-    const movieTitle = await imdbIdToTitle("tt1375666", null, "movie");
-    assert.ok(movieTitle, "Doit trouver un titre pour le film");
-    assert.match(movieTitle, /Inception/i, "Doit être Inception");
+    try {
+        // Breaking Bad (série)
+        const seriesTitle = await imdbIdToTitle("tt0903747", null, "series");
+        assert.ok(seriesTitle, "Doit trouver un titre pour la série");
+        assert.match(seriesTitle, /Breaking Bad/i, "Doit être Breaking Bad et non le film Mirror");
+
+        // Inception (film)
+        const movieTitle = await imdbIdToTitle("tt1375666", null, "movie");
+        assert.ok(movieTitle, "Doit trouver un titre pour le film");
+        assert.match(movieTitle, /Inception/i, "Doit être Inception");
+    } finally {
+        axios.get = originalGet;
+    }
 });
 
 test("Prowlarr Worker - resolveReleaseImdbId prioritizes series for TV releases", async () => {
-    const { resolveReleaseImdbId } = require("../lib/prowlarr-worker");
+    const { resolveReleaseImdbId, imdbResolutionCache } = require("../lib/prowlarr-worker");
+    const axios = require("axios");
+    const originalGet = axios.get;
 
-    // Release avec motif de série S01E01
-    const imdbSeries = await resolveReleaseImdbId("Breaking Bad S01E01 1080p", true);
-    assert.equal(
-        imdbSeries,
-        "tt0903747",
-        "Doit associer la série Breaking Bad tt0903747 et non le film El Camino tt9243946"
-    );
+    // Mock du réseau Cinemeta (pas d'appel externe en test : sinon timeout 4s → null en CI).
+    axios.get = async url => {
+        const u = typeof url === "string" ? url : "";
+        if (u.includes("cinemeta.strem.io/catalog/series") && /breaking/i.test(decodeURIComponent(u))) {
+            return {
+                data: {
+                    metas: [{ id: "tt0903747", imdb_id: "tt0903747", name: "Breaking Bad", year: "2008" }]
+                }
+            };
+        }
+        return { data: { metas: [] } };
+    };
+
+    try {
+        // Purger un éventuel résultat négatif mis en cache par un test précédent
+        imdbResolutionCache.clear();
+
+        // Release avec motif de série S01E01
+        const imdbSeries = await resolveReleaseImdbId("Breaking Bad S01E01 1080p", true);
+        assert.equal(
+            imdbSeries,
+            "tt0903747",
+            "Doit associer la série Breaking Bad tt0903747 et non le film El Camino tt9243946"
+        );
+    } finally {
+        axios.get = originalGet;
+    }
 });
 
 test("Helpers - isConfidentTitleMatch rejects error strings and unrelated titles", () => {
@@ -1083,6 +1123,14 @@ test("UI - Client script in renderConfigPage and renderAdminPage compiles withou
     assert.doesNotThrow(() => {
         new vm.Script(adminScript);
     }, "Le script client de renderAdminPage doit compiler sans aucune erreur de syntaxe");
+
+    // 3. Stats de l'index : uniquement « Inscrits » et « Actifs (24h) » (la stat « En cache » a été retirée)
+    assert.ok(configHtml.includes('id="statRegistered"'), "La stat « Inscrits » doit être présente");
+    assert.ok(configHtml.includes('id="statActive"'), "La stat « Actifs (24h) » doit être présente");
+    assert.ok(configHtml.includes("Inscrits"), "Le libellé « Inscrits » doit être présent");
+    assert.ok(configHtml.includes("Actifs (24h)"), "Le libellé « Actifs (24h) » doit être présent");
+    assert.ok(!configHtml.includes('id="statCached"'), "La stat « En cache » doit avoir été retirée");
+    assert.ok(!configHtml.includes("En cache"), "Le libellé « En cache » doit avoir été retiré");
 });
 
 test("Helpers - formatAioStream handles isInstant with ⚡, 🔍 and ⏳ badges", () => {
@@ -2796,17 +2844,19 @@ test("Catalogs - my_ad_history_series with real SQLite loadCache never throws un
     };
 
     axios.get = async (url, opts) => {
-        if (url && typeof url === "string" && url.includes("cinemeta.strem.io/catalog/series")) {
-            if (url.includes("Breaking")) {
+        const u = typeof url === "string" ? url : "";
+        if (u.includes("cinemeta.strem.io/catalog/series")) {
+            // Comparaison insensible à la casse (le titre nettoyé peut varier)
+            if (/breaking/i.test(decodeURIComponent(u))) {
                 return {
                     data: {
-                        metas: [{ id: "tt0903747", name: "Breaking Bad", poster: "https://poster-bb.jpg" }]
+                        metas: [{ id: "tt0903747", imdb_id: "tt0903747", name: "Breaking Bad", poster: "https://poster-bb.jpg" }]
                     }
                 };
             }
             return {
                 data: {
-                    metas: [{ id: "tt29277873", name: "Sousou no Frieren", poster: "https://poster.jpg" }]
+                    metas: [{ id: "tt29277873", imdb_id: "tt29277873", name: "Sousou no Frieren", poster: "https://poster.jpg" }]
                 }
             };
         }
@@ -2814,32 +2864,36 @@ test("Catalogs - my_ad_history_series with real SQLite loadCache never throws un
     };
 
     try {
-        // Pre-populate cache with an entry that has groupTitle to simulate pre-existing series without episodes array
-        realCache.series["tt0903747"] = { groupTitle: "breaking bad" };
-
-        // 1. First catalog fetch
+        // 1. Premier chargement : découvrir l'identifiant réellement attribué à la série
         const res = await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
         assert.ok(Array.isArray(res.metas), "metas should be an array");
         assert.ok(res.metas.length >= 2, "metas should contain episodes");
 
-        // Verify episodes in cache
-        const bbEntry = realCache.series["tt0903747"];
+        const bbMeta = res.metas.find(m => /breaking bad/i.test(m.name || ""));
+        assert.ok(bbMeta, "Breaking Bad doit figurer dans les métas du catalogue");
+        const bbId = bbMeta.id;
+
+        // 2. Entrée pré-existante SANS tableau episodes (chemin "undefined push")
+        realCache.series[bbId] = { groupTitle: "breaking bad" };
+        await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
+
+        const bbEntry = realCache.series[bbId];
         assert.ok(bbEntry, "Breaking Bad entry should exist");
         assert.ok(Array.isArray(bbEntry.episodes), "episodes should be an array");
         assert.equal(bbEntry.episodes.length, 2, "Breaking Bad should have 2 episodes in cache");
 
-        // 2. Fetch again to verify idempotency (no duplicate episodes)
+        // 3. Fetch again to verify idempotency (no duplicate episodes)
         const res2 = await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
         assert.ok(Array.isArray(res2.metas));
         assert.equal(
-            realCache.series["tt0903747"].episodes.length,
+            realCache.series[bbId].episodes.length,
             2,
             "Episodes must not be duplicated on repeated catalog load"
         );
 
-        // 3. Verify persistence across fresh cache proxy reload from SQLite
+        // 4. Verify persistence across fresh cache proxy reload from SQLite
         const freshCache = loadCache();
-        const reloadedBb = freshCache.series["tt0903747"];
+        const reloadedBb = freshCache.series[bbId];
         assert.ok(reloadedBb, "Entry should reload from SQLite");
         assert.ok(Array.isArray(reloadedBb.episodes), "Reloaded episodes should be an array");
         assert.equal(reloadedBb.episodes.length, 2, "Reloaded episodes count should match");

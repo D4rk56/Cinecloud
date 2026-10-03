@@ -274,6 +274,16 @@ test("Task 5 - Validation robuste des entrées sur les routes admin (/api/admin/
             assert.equal(err.response?.status, 400);
         }
 
+        // 8bis. Diagnostic : GET /api/admin/settings doit renvoyer un objet de réglages.
+        // Si la base SQLite n'est pas initialisée, POST renverrait `false` → échec obscur plus bas.
+        const settingsGetRes = await axios.get(`${base}/api/admin/settings`, { headers: authHeaders });
+        assert.equal(settingsGetRes.status, 200);
+        assert.equal(
+            typeof settingsGetRes.data.httpTimeoutMs,
+            "number",
+            "GET /api/admin/settings doit renvoyer un objet de réglages (base SQLite initialisée)"
+        );
+
         // 9. Test succès 200 sur POST /api/admin/settings avec données valides
         const settingsRes = await axios.post(
             `${base}/api/admin/settings`,
@@ -281,7 +291,11 @@ test("Task 5 - Validation robuste des entrées sur les routes admin (/api/admin/
             { headers: authHeaders }
         );
         assert.equal(settingsRes.status, 200);
-        assert.equal(settingsRes.data.settings.httpTimeoutMs, 11000);
+        assert.equal(
+            settingsRes.data.settings && settingsRes.data.settings.httpTimeoutMs,
+            11000,
+            "POST /api/admin/settings doit renvoyer les réglages mis à jour"
+        );
 
         // 10. Test rejet 400 sur POST /api/admin/cache/clear avec cible invalide
         try {

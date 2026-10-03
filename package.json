@@ -10,7 +10,7 @@
   "homepage": "https://github.com/D4rk56/Cinecloud#readme",
   "scripts": {
     "start": "node --experimental-sqlite index.js",
-    "test": "node --test",
+    "test": "node --test --test-concurrency=1",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
