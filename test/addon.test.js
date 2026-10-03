@@ -558,6 +558,7 @@ test("Prowlarr On-Demand - query sanitization cleans punctuation like colons and
             id: "tt2560140:1:1",
             type: "series",
             cleanTitle: "L'Attaque des Titans: Le Début",
+            altTitle: "Attack on Titan",
             season: 1,
             episode: 1,
             prowlarrUrl: "http://prowlarr:9696",
