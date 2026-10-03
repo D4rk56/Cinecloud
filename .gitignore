@@ -15,6 +15,9 @@ pnpm-debug.log*
 # Cache et données locales
 data/
 
+# Patches générés (archive d'audit)
+*.patch
+
 # Fichiers système et éditeurs
 .DS_Store
 Thumbs.db
