@@ -3,8 +3,43 @@
 const express = require("express");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const path = require("node:path");
 const axios = require("axios");
 const rateLimit = require("express-rate-limit");
+
+const DATA_DIR = path.join(__dirname, "data");
+const ADMIN_PASS_FILE = path.join(DATA_DIR, ".admin_password");
+
+// Gestion sécurisée du mot de passe Administrateur (Suppression définitive de admin123)
+function resolveAdminPassword() {
+    const envPass = process.env.ADMIN_PASSWORD;
+    if (envPass && typeof envPass === "string" && envPass.trim() !== "" && envPass !== "admin123") {
+        return envPass.trim();
+    }
+
+    if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+
+    if (fs.existsSync(ADMIN_PASS_FILE)) {
+        try {
+            const saved = fs.readFileSync(ADMIN_PASS_FILE, "utf8").trim();
+            if (saved && saved.length >= 8 && saved !== "admin123") {
+                process.env.ADMIN_PASSWORD = saved;
+                return saved;
+            }
+        } catch (e) {}
+    }
+
+    const generated = crypto.randomBytes(16).toString("hex");
+    try {
+        fs.writeFileSync(ADMIN_PASS_FILE, generated, { mode: 0o600 });
+    } catch (e) {}
+    process.env.ADMIN_PASSWORD = generated;
+    console.log(`[Security] 🔐 Mot de passe administrateur sécurisé généré : ${generated}`);
+    console.log(`[Security] 💾 Sauvegardé dans data/.admin_password (définissez ADMIN_PASSWORD dans vos variables d'environnement pour personnaliser).`);
+    return generated;
+}
 
 const {
     initConsoleInterceptors,
@@ -68,12 +103,75 @@ app.set("trust proxy", true);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Configuration CORS pour compatibilité Stremio / Nuvio
+// Configuration CORS stricte et contextualisée
 app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "*");
-    res.setHeader("Access-Control-Allow-Methods", "*");
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+
+    const pathUrl = req.path || "";
+
+    // 1. Routes Stremio publiques & assets : CORS ouvert pour compatibilité Web Stremio et lecteurs externes
+    const isStremioRoute = pathUrl.includes("/manifest.json") ||
+                           pathUrl.includes("/catalog/") ||
+                           pathUrl.includes("/meta/") ||
+                           pathUrl.includes("/stream/") ||
+                           pathUrl === "/logo.png" ||
+                           pathUrl === "/background.png";
+
+    if (isStremioRoute) {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Access-Control-Allow-Headers", "*");
+        res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+        if (req.method === "OPTIONS") return res.sendStatus(204);
+        return next();
+    }
+
+    // 2. Routes API & Administration : vérification stricte de l'origine
+    if (pathUrl.startsWith("/api/")) {
+        const origin = req.headers.origin;
+
+        // Requêtes directes sans en-tête Origin (navigation navigateur même domaine, curl, outils CLI)
+        if (!origin) {
+            return next();
+        }
+
+        try {
+            const parsedOrigin = new URL(origin);
+            const reqHost = req.get("host"); // ex: localhost:3000 ou domaine.fr
+            const originHost = parsedOrigin.host; // ex: localhost:3000
+
+            const isSameHost = originHost.toLowerCase() === (reqHost || "").toLowerCase();
+            const isLocal = ["localhost", "127.0.0.1", "::1"].includes(parsedOrigin.hostname.toLowerCase());
+            const customAllowed = (process.env.CORS_ALLOWED_ORIGINS || "")
+                .split(",")
+                .map(o => o.trim().toLowerCase())
+                .filter(Boolean);
+            const isCustomAllowed = customAllowed.includes(origin.toLowerCase()) || customAllowed.includes(originHost.toLowerCase());
+
+            if (isSameHost || isLocal || isCustomAllowed) {
+                res.setHeader("Access-Control-Allow-Origin", origin);
+                res.setHeader("Access-Control-Allow-Credentials", "true");
+                res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, Accept");
+                res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+                if (req.method === "OPTIONS") return res.sendStatus(204);
+                return next();
+            }
+        } catch (e) {}
+
+        // Origine tierce non autorisée : blocage strict
+        if (req.method === "OPTIONS") {
+            return res.status(403).json({ error: "CORS Forbidden: Origine non autorisée pour l'API." });
+        }
+        return res.status(403).json({ error: "CORS Forbidden: Origine non autorisée pour l'API." });
+    }
+
+    // 3. Autres routes (ex: /configure, /, /resolve/...)
+    const origin = req.headers.origin;
+    if (origin) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Headers", "*");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    }
+    if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
 });
 
@@ -87,8 +185,38 @@ const authLimiter = rateLimit({
     message: { error: "Trop de tentatives d'authentification. Veuillez patienter 15 minutes." }
 });
 
+// Limitation de débit sur les sondes et vérifications d'APIs (Protection SSRF et abus de clés)
+const apiCheckLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 30, // 30 requêtes par minute
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: { xForwardedForHeader: false, trustProxy: false },
+    message: { error: "Trop de requêtes de vérification d'API. Veuillez patienter une minute." }
+});
+
+// Limitation de débit sur les actions de maintenance et sync admin
+const adminActionLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 30, // 30 requêtes par minute
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: { xForwardedForHeader: false, trustProxy: false },
+    message: { error: "Trop d'actions administratives rapprochées. Veuillez patienter une minute." }
+});
+
+// Limitation de débit sur le résolveur lazy pour prévenir le scraping de flux
+const resolveLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 60, // 60 requêtes par minute
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: { xForwardedForHeader: false, trustProxy: false },
+    message: { error: "Trop de résolutions de flux. Veuillez patienter une minute." }
+});
+
 // Authentification Administrateur
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+const ADMIN_PASSWORD = resolveAdminPassword();
 const activeAdminTokens = new Set();
 
 function requireAdmin(req, res, next) {
@@ -353,14 +481,14 @@ app.post("/api/user/update", authLimiter, (req, res) => {
     }
 });
 
-app.post("/api/check/prowlarr", async (req, res) => {
+app.post("/api/check/prowlarr", apiCheckLimiter, async (req, res) => {
     const { prowlarrUrl, prowlarrKey } = req.body;
     const { checkProwlarrConnectivity } = require("./lib/prowlarr-worker");
     const result = await checkProwlarrConnectivity(prowlarrUrl, prowlarrKey);
     res.json(result);
 });
 
-app.post("/api/check/lumio", async (req, res) => {
+app.post("/api/check/lumio", apiCheckLimiter, async (req, res) => {
     const { lumioUrl } = req.body;
     if (!lumioUrl || typeof lumioUrl !== "string" || !lumioUrl.trim()) {
         return res.json({ success: false, valid: false, error: "Veuillez saisir l'URL de votre manifest Lumio" });
@@ -467,20 +595,20 @@ app.get("/api/status/warp", (req, res) => {
     res.json(getWarpStatus());
 });
 
-app.post("/api/check/alldebrid", async (req, res) => {
+app.post("/api/check/alldebrid", apiCheckLimiter, async (req, res) => {
     const { apiKey } = req.body;
     const result = await checkAllDebridKey(apiKey);
     res.json(result);
 });
 
-app.post("/api/check/torbox", async (req, res) => {
+app.post("/api/check/torbox", apiCheckLimiter, async (req, res) => {
     const { apiKey } = req.body;
     const { checkTorboxKey } = require("./lib/torbox");
     const result = await checkTorboxKey(apiKey);
     res.json(result);
 });
 
-app.post("/api/check/tmdb", async (req, res) => {
+app.post("/api/check/tmdb", apiCheckLimiter, async (req, res) => {
     const { tmdbKey } = req.body;
     const result = await checkTmdbKey(tmdbKey);
     res.json(result);
@@ -564,7 +692,7 @@ app.post("/api/admin/settings", requireAdmin, (req, res) => {
     res.json({ success: true, settings: updated });
 });
 
-app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
+app.post("/api/admin/cache/clear", requireAdmin, adminActionLimiter, (req, res) => {
     const { target } = req.body;
     let cleared = 0;
     if (target === "torrents" || target === "all") {
@@ -580,7 +708,7 @@ app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
 });
 
 // Sonde / Test de santé en direct des APIs AllDebrid et Torbox
-app.get("/api/admin/health/debrid", requireAdmin, async (req, res) => {
+app.get("/api/admin/health/debrid", requireAdmin, adminActionLimiter, async (req, res) => {
     const results = {
         timestamp: new Date().toISOString(),
         alldebrid: { status: "unknown", latencyMs: 0, error: null },
@@ -630,7 +758,7 @@ app.get("/api/admin/health/debrid", requireAdmin, async (req, res) => {
 });
 
 // Téléchargement sécurisé du backup SQLite
-app.get("/api/admin/backup", requireAdmin, (req, res) => {
+app.get("/api/admin/backup", requireAdmin, adminActionLimiter, (req, res) => {
     const { SQLITE_FILE, checkpointDatabase } = require("./lib/db");
     if (!SQLITE_FILE || !fs.existsSync(SQLITE_FILE)) {
         return res.status(404).json({ error: "Fichier de base de données SQLite introuvable." });
@@ -644,33 +772,33 @@ app.get("/api/admin/backup", requireAdmin, (req, res) => {
     });
 });
 
-// Purge des torrents expirés (+30 jours)
-app.post("/api/admin/maintenance/purge-expired", requireAdmin, (req, res) => {
-    const { purgeOldCachedTorrents } = require("./lib/db");
-    const purged = purgeOldCachedTorrents(30 * 86400);
+// Purge des torrents expirés (+30 jours) déportée dans le worker thread
+app.post("/api/admin/maintenance/purge-expired", requireAdmin, adminActionLimiter, async (req, res) => {
+    const { asyncPurgeOldCachedTorrents } = require("./lib/db");
+    const purged = await asyncPurgeOldCachedTorrents(30 * 86400);
     res.json({ success: true, purged, message: `${purged} torrents expirés (+30j) supprimés du cache.` });
 });
 
-// Optimisation SQLite (WAL checkpoint & VACUUM)
-app.post("/api/admin/maintenance/vacuum", requireAdmin, (req, res) => {
-    const { optimizeDatabase } = require("./lib/db");
-    const result = optimizeDatabase();
-    if (result.success) {
+// Optimisation SQLite (WAL checkpoint & VACUUM) déportée dans le worker thread
+app.post("/api/admin/maintenance/vacuum", requireAdmin, adminActionLimiter, async (req, res) => {
+    const { asyncOptimizeDatabase } = require("./lib/db");
+    const result = await asyncOptimizeDatabase();
+    if (result && result.success) {
         res.json({ success: true, message: "Base de données SQLite optimisée avec succès (WAL checkpoint & VACUUM)." });
     } else {
-        res.status(500).json({ error: result.error || "Erreur lors de l'optimisation SQLite." });
+        res.status(500).json({ error: (result && result.error) || "Erreur lors de l'optimisation SQLite." });
     }
 });
 
 // Déclenchement forcé immédiat du cycle RSS Prowlarr crowdsourcing
-app.post(["/api/admin/prowlarr/sync", "/api/admin/maintenance/sync-prowlarr"], requireAdmin, async (req, res) => {
+app.post(["/api/admin/prowlarr/sync", "/api/admin/maintenance/sync-prowlarr"], requireAdmin, adminActionLimiter, async (req, res) => {
     const { forceSyncProwlarrCrowdsourcing } = require("./lib/prowlarr-worker");
     const result = await forceSyncProwlarrCrowdsourcing();
     res.json(result);
 });
 
 // Purge globale des magnets AllDebrid bloqués
-app.post("/api/admin/cleanup-magnets", requireAdmin, async (req, res) => {
+app.post("/api/admin/cleanup-magnets", requireAdmin, adminActionLimiter, async (req, res) => {
     try {
         const { apiKey } = req.body || {};
         if (apiKey) {
@@ -715,7 +843,7 @@ app.post("/api/admin/cleanup-magnets", requireAdmin, async (req, res) => {
 // =============================================================================
 // 4. ENDPOINT DE RÉSOLUTION LAZY (VALIDATION & FAILOVER INSTANTANÉ)
 // =============================================================================
-app.get("/resolve/:userRef/:imdbId/:fileRef(*)", (req, res) => {
+app.get("/resolve/:userRef/:imdbId/:fileRef(*)", resolveLimiter, (req, res) => {
     const userRef = req.params.userRef;
     const user = (userRef && userRef.length === 36 && userRef.includes("-")) ? getUserByUuid(userRef) : null;
     const tag = user ? { uuid: user.uuid, pseudo: user.pseudo || "Utilisateur" } : { uuid: userRef, pseudo: "Client" };
@@ -914,15 +1042,17 @@ app.get("/admin", (req, res) => {
 // Démarrage du worker RSS Prowlarr
 startProwlarrWorker();
 
-// Purge périodique du cache de torrents (TTL 30 jours)
-purgeOldCachedTorrents();
+// Purge périodique du cache de torrents (TTL 30 jours) déportée dans le worker
+const { asyncPurgeOldCachedTorrents } = require("./lib/db");
+asyncPurgeOldCachedTorrents();
 const purgeTimer = setInterval(() => {
-    purgeOldCachedTorrents();
+    asyncPurgeOldCachedTorrents();
 }, 24 * 60 * 60 * 1000);
 if (purgeTimer && purgeTimer.unref) {
     purgeTimer.unref();
 }
 
+app.resolveAdminPassword = resolveAdminPassword;
 module.exports = app;
 
 if (require.main === module) {

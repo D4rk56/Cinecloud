@@ -3473,6 +3473,177 @@ test("Stremio Streams - handleStream with active AllDebrid pre-validation displa
     }
 });
 
+test("Security - Admin Password generator avoids default and persists", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const app = require("../index");
 
+    assert.ok(typeof app.resolveAdminPassword === "function", "resolveAdminPassword doit être exposé");
+    const password = app.resolveAdminPassword();
+    assert.ok(password && password.length >= 16, "Le mot de passe généré doit comporter au moins 16 caractères");
+    assert.notEqual(password, "admin123", "Le mot de passe ne doit jamais être admin123");
 
+    const passFile = path.join(__dirname, "..", "data", ".admin_password");
+    if (fs.existsSync(passFile)) {
+        const saved = fs.readFileSync(passFile, "utf8").trim();
+        assert.equal(saved, password, "Le mot de passe sauvegardé dans .admin_password doit correspondre");
+    }
+});
 
+test("Database - userCacheLRU L1 cache hit, invalidation, and Worker thread offload", async () => {
+    const {
+        createUser,
+        getUserByUuid,
+        updateUserConfig,
+        deleteUser,
+        userCacheLRU,
+        asyncUpsertCachedTorrent,
+        getCachedTorrentsByImdb,
+        deleteCachedTorrent,
+        asyncTouchUserActivity,
+        asyncPurgeOldCachedTorrents,
+        asyncOptimizeDatabase
+    } = require("../lib/db");
+
+    const testUuid = "99998888-7777-6666-5555-444433332222";
+    try {
+        // 1. Invalidation préalable
+        userCacheLRU.delete(testUuid);
+        assert.equal(userCacheLRU.has(testUuid), false);
+
+        // 2. Création utilisateur
+        createUser(testUuid, "dummyhash", "dummyconfig", "LRUTester", "local");
+        assert.equal(userCacheLRU.has(testUuid), false, "L1 cache doit être invalidé à la création");
+
+        // 3. Premier accès : peuplement du cache L1
+        const u1 = getUserByUuid(testUuid);
+        assert.ok(u1);
+        assert.equal(u1.pseudo, "LRUTester");
+        assert.equal(userCacheLRU.has(testUuid), true, "L1 cache doit contenir l'utilisateur après premier get");
+
+        // 4. Deuxième accès : hit L1 ultra rapide sans accès DB
+        const u2 = getUserByUuid(testUuid);
+        assert.equal(u2.uuid, testUuid);
+
+        // 5. Mise à jour config : invalidation L1
+        updateUserConfig(testUuid, "newconfig", "LRUTesterUpdated", "shared");
+        assert.equal(userCacheLRU.has(testUuid), false, "L1 cache doit être invalidé après update");
+
+        const u3 = getUserByUuid(testUuid);
+        assert.equal(u3.pseudo, "LRUTesterUpdated");
+        assert.equal(userCacheLRU.has(testUuid), true);
+
+        // 6. Test async DB Worker
+        const testHash = "worker112233445566778899aabbccddeeff0011";
+        await asyncUpsertCachedTorrent({
+            infoHash: testHash,
+            imdbId: "tt9999000",
+            title: "Worker Test Movie 1080p",
+            filename: "Worker.Test.Movie.1080p.mkv",
+            size: 2147483648,
+            indexer: "WorkerIndexer",
+            seeders: 25,
+            isInstant: 1
+        });
+
+        // Laisser 50ms pour que le worker thread synchronise
+        await new Promise(r => setTimeout(r, 50));
+        const cached = getCachedTorrentsByImdb("tt9999000");
+        assert.ok(cached.some(c => (c.infoHash || c.info_hash) === testHash));
+        deleteCachedTorrent(testHash);
+
+        // 7. Test asyncTouchUserActivity, asyncPurgeOldCachedTorrents, asyncOptimizeDatabase
+        await asyncTouchUserActivity(testUuid);
+        const purgedCount = await asyncPurgeOldCachedTorrents(365 * 86400);
+        assert.ok(typeof purgedCount === "number");
+        const optResult = await asyncOptimizeDatabase();
+        assert.ok(optResult && optResult.success);
+
+    } finally {
+        deleteUser(testUuid);
+        userCacheLRU.delete(testUuid);
+    }
+});
+
+test("Security - Strict CORS blocks unauthorized third-party origins on /api and permits Stremio routes", async () => {
+    const app = require("../index");
+    const axios = require("axios");
+
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+        // 1. Stremio manifest : CORS ouvert (*)
+        const resManifest = await axios.get(`${base}/test-uuid-00000000/manifest.json`, {
+            headers: { Origin: "https://web.stremio.com" },
+            validateStatus: () => true
+        });
+        assert.equal(resManifest.headers["access-control-allow-origin"], "*");
+
+        // 2. Asset public : CORS ouvert (*)
+        const resLogo = await axios.get(`${base}/logo.png`, {
+            headers: { Origin: "https://some-app.com" },
+            validateStatus: () => true
+        });
+        assert.equal(resLogo.headers["access-control-allow-origin"], "*");
+
+        // 3. /api/* avec origine tierce non autorisée : HTTP 403 Forbidden
+        const resEvilApi = await axios.get(`${base}/api/stats`, {
+            headers: { Origin: "https://malicious-website.attacker.com" },
+            validateStatus: () => true
+        });
+        assert.equal(resEvilApi.status, 403, "Une origine tierce sur /api/* doit être bloquée avec 403");
+        assert.ok(resEvilApi.data.error.includes("CORS Forbidden"));
+
+        // 4. /api/* OPTIONS preflight avec origine tierce non autorisée : HTTP 403
+        const resEvilPreflight = await axios.options(`${base}/api/admin/login`, {
+            headers: { Origin: "https://malicious-website.attacker.com" },
+            validateStatus: () => true
+        });
+        assert.equal(resEvilPreflight.status, 403);
+
+        // 5. /api/* avec localhost : autorisé
+        const resLocalhostApi = await axios.get(`${base}/api/stats`, {
+            headers: { Origin: `http://localhost:${port}` },
+            validateStatus: () => true
+        });
+        assert.equal(resLocalhostApi.status, 200);
+        assert.equal(resLocalhostApi.headers["access-control-allow-origin"], `http://localhost:${port}`);
+
+        // 6. /api/* sans en-tête Origin (navigation directe, CLI, curl) : autorisé
+        const resNoOrigin = await axios.get(`${base}/api/stats`, {
+            validateStatus: () => true
+        });
+        assert.equal(resNoOrigin.status, 200);
+    } finally {
+        server.close();
+    }
+});
+
+test("Security - Rate Limiting on /api/check endpoints (apiCheckLimiter)", async () => {
+    const app = require("../index");
+    const axios = require("axios");
+
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+        // Envoi de requêtes rapides sur /api/check/alldebrid
+        let rateLimited = false;
+        for (let i = 0; i < 35; i++) {
+            const res = await axios.post(`${base}/api/check/alldebrid`, { apiKey: "" }, {
+                validateStatus: () => true
+            });
+            if (res.status === 429) {
+                rateLimited = true;
+                assert.ok(res.data.error.includes("Trop de requêtes"));
+                break;
+            }
+        }
+        assert.ok(rateLimited, "apiCheckLimiter doit déclencher un HTTP 429 au-delà de 30 req/min");
+    } finally {
+        server.close();
+    }
+});
