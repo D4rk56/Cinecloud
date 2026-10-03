@@ -52,10 +52,20 @@ CinéCloud FR est conçu selon le principe de **défense en profondeur** (_defen
 ### F. Limitation de débit (_Rate Limiting_)
 
 - Des limiteurs de débit dédiés (`express-rate-limit`) protègent les surfaces sensibles contre les attaques par force brute et par déni de service (DoS) :
-  - Connexion administrateur (`authLimiter` : 5 tentatives / 15 min)
-  - Sondes et vérifications de clés (`apiCheckLimiter` : 10 requêtes / min)
+  - Connexion administrateur (`authLimiter` : 30 tentatives / 15 min)
+  - Sondes et vérifications de clés (`apiCheckLimiter` : 30 requêtes / min)
   - Résolution de flux (`resolveLimiter` : 60 requêtes / min)
   - Maintenance & actions admin (`adminActionLimiter` : 30 requêtes / min)
+
+### G. Protection SSRF & confiance proxy
+
+- Un garde-fou réseau dédié (`lib/net-guard.js`) bloque les requêtes sortantes vers les hôtes
+  privés, loopback, link-local, adresses de métadonnées cloud (`169.254.0.0/16`) et réservées,
+  avec résolution DNS pour contrer le rebinding. Il est appliqué aux sondes
+  `/api/check/prowlarr` et `/api/check/lumio`, ainsi qu'à la validation des URL Prowlarr partagées.
+- La confiance accordée aux en-têtes `X-Forwarded-*` est désactivée par défaut (`TRUST_PROXY=false`) :
+  `req.ip` correspond alors à l'adresse socket réelle, non falsifiable. Elle ne doit être activée
+  (`TRUST_PROXY=1`) que derrière un reverse proxy / tunnel de confiance.
 
 ---
 

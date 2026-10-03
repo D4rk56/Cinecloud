@@ -13,6 +13,12 @@ const { secureFilePermissions } = require("./lib/crypto");
 
 const DATA_DIR = path.join(__dirname, "data");
 const ADMIN_PASS_FILE = path.join(DATA_DIR, ".admin_password");
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_ID_LENGTH = 2000;
+
+function isReasonableId(id) {
+    return typeof id === "string" && id.length > 0 && id.length <= MAX_ID_LENGTH && !/[\u0000-\u001f]/.test(id);
+}
 
 // Gestion sécurisée du mot de passe Administrateur (Suppression définitive de admin123)
 function resolveAdminPassword() {
@@ -95,6 +101,7 @@ const alldebrid = require("./lib/alldebrid");
 const { getWarpStatus, checkAllDebridKey } = alldebrid;
 const { LOGO_SVG, BACKGROUND_SVG, renderConfigPage, renderAdminPage } = require("./lib/ui");
 const { loadAnimeMapping } = require("./lib/animeMapping");
+const { assertSafePublicUrl, isPrivateUrl } = require("./lib/net-guard");
 
 // Initialisation et indexation mémoire de la table communautaire Fribb anime-lists au boot
 loadAnimeMapping().catch(err => console.warn("[Server] AnimeMapping non disponible :", err.message));
@@ -115,8 +122,17 @@ axios.defaults.headers.common["User-Agent"] = BROWSER_UA;
 const app = express();
 const cache = loadCache();
 
-// Indique à Express de faire confiance aux reverse proxies (Cloudflare Tunnel, Nginx, Caddy, Traefik)
-app.set("trust proxy", true);
+// Fait confiance aux reverse proxies uniquement si explicitement configuré (TRUST_PROXY).
+// Par défaut false : req.ip = adresse socket réelle (non falsifiable via X-Forwarded-For).
+// Derrière Cloudflare Tunnel / Nginx, définir TRUST_PROXY=1.
+function resolveTrustProxy() {
+    const raw = (process.env.TRUST_PROXY || "").trim().toLowerCase();
+    if (raw === "" || raw === "false") return false;
+    if (raw === "true") return true;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? n : false;
+}
+app.set("trust proxy", resolveTrustProxy());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -237,13 +253,24 @@ const resolveLimiter = rateLimit({
 
 // Authentification Administrateur
 const ADMIN_PASSWORD = resolveAdminPassword();
-const activeAdminTokens = new Set();
+const ADMIN_TOKEN_TTL_MS = 8 * 60 * 60 * 1000; // 8 heures, expiration glissante
+const activeAdminTokens = new Map(); // token -> expiresAt (timestamp ms)
 
 function requireAdmin(req, res, next) {
     const token = req.headers["x-admin-token"];
-    if (!token || !activeAdminTokens.has(token)) {
+    if (!token) {
         return res.status(401).json({ error: "Session administrateur non autorisée ou expirée." });
     }
+    const expiresAt = activeAdminTokens.get(token);
+    if (!expiresAt) {
+        return res.status(401).json({ error: "Session administrateur non autorisée ou expirée." });
+    }
+    if (Date.now() > expiresAt) {
+        activeAdminTokens.delete(token);
+        return res.status(401).json({ error: "Session administrateur non autorisée ou expirée." });
+    }
+    // Renouvellement glissant de l'expiration à chaque requête autorisée
+    activeAdminTokens.set(token, Date.now() + ADMIN_TOKEN_TTL_MS);
     next();
 }
 
@@ -354,6 +381,13 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
                   : ALL_CATALOGS.map(c => c.id)
         };
 
+        // Garde SSRF de second ordre : refuser les URL Prowlarr privées explicites (IP privée/loopback)
+        if (configData.prowlarrKey && configData.prowlarrKey.trim() && configData.prowlarrKey !== "off") {
+            if (isPrivateUrl(configData.prowlarrUrl)) {
+                return res.status(400).json({ error: "L'URL Prowlarr pointe vers un hôte privé ou réservé, non autorisé." });
+            }
+        }
+
         const configEncrypted = encryptConfig(configData);
         createUser(uuid, passwordHash, configEncrypted, configData.pseudo, configData.prowlarrMode);
 
@@ -408,13 +442,22 @@ app.post("/api/user/login", authLimiter, (req, res) => {
             manifestUrl,
             stremioUrl,
             config: {
-                ...config,
                 debridProvider: config.debridProvider || "alldebrid",
-                torboxApiKey: config.torboxApiKey || "",
+                apiKeyPreview: config.apiKey ? `${config.apiKey.slice(0, 4)}...${config.apiKey.slice(-4)}` : "",
                 torboxApiKeyPreview: config.torboxApiKey
                     ? `${config.torboxApiKey.slice(0, 4)}...${config.torboxApiKey.slice(-4)}`
                     : "",
                 pseudo: user.pseudo || config.pseudo || "",
+                tmdbKey: config.tmdbKey || "default",
+                cacheMode: config.cacheMode || "on",
+                langPref: config.langPref || "multi_vff,vff,vfi,multi,vf,vostfr",
+                resolutions: config.resolutions || "4k,1080p,720p,480p",
+                hideUnknownLanguages: Boolean(config.hideUnknownLanguages),
+                sortBy: config.sortBy || "quality",
+                maxSizeGb: config.maxSizeGb !== undefined ? config.maxSizeGb : 150,
+                maxStreams: config.maxStreams || 0,
+                prioritizeCloud:
+                    config.prioritizeCloud !== undefined ? Boolean(config.prioritizeCloud) : true,
                 prowlarrUrl: config.prowlarrUrl || "http://prowlarr:9696",
                 prowlarrKey: config.prowlarrKey || "",
                 prowlarrMode: user.prowlarrMode || config.prowlarrMode || "local",
@@ -422,8 +465,7 @@ app.post("/api/user/login", authLimiter, (req, res) => {
                 preValidateCache: config.preValidateCache !== false,
                 disableCatalogs: Boolean(config.disableCatalogs),
                 lumioUrl: config.lumioUrl || "",
-                maxSizeGb: config.maxSizeGb !== undefined ? config.maxSizeGb : 150,
-                apiKeyPreview: config.apiKey ? `${config.apiKey.slice(0, 4)}...${config.apiKey.slice(-4)}` : ""
+                enabledCatalogs: config.enabledCatalogs
             }
         });
     } catch (err) {
@@ -538,6 +580,13 @@ app.post("/api/user/update", authLimiter, (req, res) => {
                   : currentConfig.enabledCatalogs
         };
 
+        // Garde SSRF de second ordre : refuser les URL Prowlarr privées explicites (IP privée/loopback)
+        if (updatedConfig.prowlarrKey && updatedConfig.prowlarrKey.trim() && updatedConfig.prowlarrKey !== "off") {
+            if (isPrivateUrl(updatedConfig.prowlarrUrl)) {
+                return res.status(400).json({ error: "L'URL Prowlarr pointe vers un hôte privé ou réservé, non autorisé." });
+            }
+        }
+
         updateUserConfig(uuid.trim(), encryptConfig(updatedConfig), updatedConfig.pseudo, updatedConfig.prowlarrMode);
 
         if (newPassword && typeof newPassword === "string" && newPassword.length >= 4) {
@@ -575,6 +624,12 @@ app.post("/api/check/lumio", apiCheckLimiter, async (req, res) => {
     let raw = lumioUrl.trim();
     if (!raw.endsWith("/manifest.json")) {
         raw = raw.replace(/\/+$/, "") + "/manifest.json";
+    }
+
+    // Garde SSRF : refuser tout hôte privé / loopback / link-local / métadonnées (avec résolution DNS)
+    const ssrfCheck = await assertSafePublicUrl(raw);
+    if (!ssrfCheck.ok) {
+        return res.json({ success: false, valid: false, error: `URL Lumio refusée (sécurité) : ${ssrfCheck.error}` });
     }
 
     try {
@@ -731,7 +786,7 @@ app.post("/api/admin/login", authLimiter, validateAdmin({ body: loginSchema }), 
     }
     if (isValid) {
         const token = crypto.randomBytes(24).toString("hex");
-        activeAdminTokens.add(token);
+        activeAdminTokens.set(token, Date.now() + ADMIN_TOKEN_TTL_MS);
         return res.json({ success: true, token });
     }
     return res.status(401).json({ error: "Mot de passe administrateur incorrect." });
@@ -987,6 +1042,7 @@ app.get("/:uuid/manifest.json", (req, res) => {
 app.get("/:uuid/catalog/:type/:id.json", async (req, res) => {
     const config = getUserConfig(req.params.uuid);
     if (!config) return res.status(404).json({ error: "Addon introuvable." });
+    if (!isReasonableId(req.params.id)) return res.status(400).json({ error: "Identifiant invalide." });
     try {
         const extra = req.query && Object.keys(req.query).length > 0 ? req.query : null;
         const result = await handleCatalog(config, req.params.type, req.params.id, cache, extra);
@@ -1000,6 +1056,7 @@ app.get("/:uuid/catalog/:type/:id.json", async (req, res) => {
 app.get("/:uuid/catalog/:type/:id/:extra.json", async (req, res) => {
     const config = getUserConfig(req.params.uuid);
     if (!config) return res.status(404).json({ error: "Addon introuvable." });
+    if (!isReasonableId(req.params.id)) return res.status(400).json({ error: "Identifiant invalide." });
     try {
         const extraParam = req.params.extra;
         const extraObj = req.query && Object.keys(req.query).length > 0 ? { extraParam, ...req.query } : extraParam;
@@ -1014,6 +1071,7 @@ app.get("/:uuid/catalog/:type/:id/:extra.json", async (req, res) => {
 app.get("/:uuid/meta/:type/:id.json", async (req, res) => {
     const config = getUserConfig(req.params.uuid);
     if (!config) return res.status(404).json({ error: "Addon introuvable." });
+    if (!isReasonableId(req.params.id)) return res.status(400).json({ error: "Identifiant invalide." });
     try {
         const result = await handleMeta(config, req.params.type, req.params.id, cache);
         res.json(result);
@@ -1026,6 +1084,7 @@ app.get("/:uuid/meta/:type/:id.json", async (req, res) => {
 app.get("/:uuid/stream/:type/:id.json", async (req, res) => {
     const config = getUserConfig(req.params.uuid);
     if (!config) return res.status(404).json({ error: "Addon introuvable." });
+    if (!isReasonableId(req.params.id)) return res.status(400).json({ error: "Identifiant invalide." });
     try {
         const protocol = getRequestProtocol(req);
         const baseUrl = `${protocol}://${req.get("host")}`;
@@ -1038,86 +1097,11 @@ app.get("/:uuid/stream/:type/:id.json", async (req, res) => {
 });
 
 // =============================================================================
-// 6. RÉTRO-COMPATIBILITÉ POUR LES ANCIENNES URLS (6 PARAMÈTRES)
+// 6. RÉTRO-COMPATIBILITÉ POUR LES ANCIENNES URLS (6 PARAMÈTRES) — SUPPRIMÉE
+//    Les anciennes URL embarquaient la clé API AllDebrid en clair dans le chemin
+//    et dans les URLs de flux (k_base64url). Elles ont été retirées pour des
+//    raisons de sécurité. Les utilisateurs doivent recréer un manifest UUID via `/`.
 // =============================================================================
-
-function parseLegacyConfig(params) {
-    return {
-        apiKey: params.apiKey,
-        tmdbKey: params.tmdbKey,
-        cacheMode: params.cacheMode,
-        langPref: params.langPref,
-        prowlarrUrl: process.env.PROWLARR_URL || "http://prowlarr:9696",
-        prowlarrKey: params.prowlarrKey,
-        enabledCatalogs: params.enabledCatalogs
-    };
-}
-
-app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/manifest.json", (req, res) => {
-    const config = parseLegacyConfig(req.params);
-    const protocol = getRequestProtocol(req);
-    const baseUrl = `${protocol}://${req.get("host")}`;
-    res.json(handleManifest(config, baseUrl));
-});
-
-app.get(
-    "/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id.json",
-    async (req, res) => {
-        const config = parseLegacyConfig(req.params);
-        try {
-            const extra = req.query && Object.keys(req.query).length > 0 ? req.query : null;
-            const result = await handleCatalog(config, req.params.type, req.params.id, cache, extra);
-            res.json(result);
-        } catch (err) {
-            console.error(`[Legacy Catalog] Erreur ${req.params.id}:`, err.message);
-            res.json({ metas: [] });
-        }
-    }
-);
-
-app.get(
-    "/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id/:extra.json",
-    async (req, res) => {
-        const config = parseLegacyConfig(req.params);
-        try {
-            const extraParam = req.params.extra;
-            const extraObj = req.query && Object.keys(req.query).length > 0 ? { extraParam, ...req.query } : extraParam;
-            const result = await handleCatalog(config, req.params.type, req.params.id, cache, extraObj);
-            res.json(result);
-        } catch (err) {
-            res.json({ metas: [] });
-        }
-    }
-);
-
-app.get(
-    "/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/meta/:type/:id.json",
-    async (req, res) => {
-        const config = parseLegacyConfig(req.params);
-        try {
-            const result = await handleMeta(config, req.params.type, req.params.id, cache);
-            res.json(result);
-        } catch (err) {
-            res.status(500).json({ error: err.message });
-        }
-    }
-);
-
-app.get(
-    "/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/stream/:type/:id.json",
-    async (req, res) => {
-        const config = parseLegacyConfig(req.params);
-        try {
-            const protocol = getRequestProtocol(req);
-            const baseUrl = `${protocol}://${req.get("host")}`;
-            const legacyRef = "k_" + Buffer.from(config.apiKey).toString("base64url");
-            const result = await handleStream(config, req.params.type, req.params.id, cache, baseUrl, legacyRef);
-            res.json(result);
-        } catch (err) {
-            res.json({ streams: [] });
-        }
-    }
-);
 
 // =============================================================================
 // 7. INTERFACE WEB & STATIQUES (STREAM-FUSION & ADMIN)
@@ -1144,11 +1128,12 @@ app.get("/configure", (req, res) => {
 });
 
 app.get("/:uuid/configure", (req, res) => {
-    res.send(renderConfigPage("configure", req.params.uuid));
+    const uuid = UUID_RE.test(req.params.uuid) ? req.params.uuid : "";
+    res.send(renderConfigPage("configure", uuid));
 });
 
 app.get("/:uuid", (req, res, next) => {
-    if (req.params.uuid && req.params.uuid.length === 36 && req.params.uuid.includes("-")) {
+    if (UUID_RE.test(req.params.uuid)) {
         return res.send(renderConfigPage("configure", req.params.uuid));
     }
     next();

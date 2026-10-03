@@ -1134,11 +1134,17 @@ test("Helpers - formatAioStream handles isInstant with ⚡, 🔍 and ⏳ badges"
 test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagnosis", async () => {
     const http = require("http");
     const { checkProwlarrConnectivity } = require("../lib/prowlarr-worker");
+    const netGuard = require("../lib/net-guard");
 
     // 1. Validation des paramètres requis
     const emptyRes = await checkProwlarrConnectivity("", "");
     assert.equal(emptyRes.success, false);
     assert.equal(emptyRes.valid, false);
+
+    // 1b. Garde SSRF : refus des hôtes privés/loopback
+    const ssrfRes = await checkProwlarrConnectivity("http://127.0.0.1:9696", "test_key");
+    assert.equal(ssrfRes.success, false);
+    assert.ok(ssrfRes.error.includes("refusée"), "Doit bloquer un hôte loopback (SSRF)");
 
     // 2. Diagnostic d'hôte introuvable
     const notFoundRes = await checkProwlarrConnectivity("http://prowlarr-inexistant-test:9696", "test_key");
@@ -1175,6 +1181,11 @@ test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagn
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     const port = server.address().port;
     const baseUrl = `http://127.0.0.1:${port}`;
+
+    // Neutralise la garde SSRF pour tester la logique de diagnostic contre le serveur mock local (loopback).
+    // La garde SSRF elle-même est vérifiée en 1b.
+    const originalGuard = netGuard.assertSafePublicUrl;
+    netGuard.assertSafePublicUrl = async () => ({ ok: true });
 
     try {
         // Test 3a : Instance standard à la racine
@@ -1216,6 +1227,7 @@ test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagn
         assert.ok(cfRes.error.includes("Cloudflare 1033"), "Doit diagnostiquer l'erreur Cloudflare 1033");
     } finally {
         server.close();
+        netGuard.assertSafePublicUrl = originalGuard;
     }
 });
 
@@ -1320,18 +1332,35 @@ test("Helpers - formatAioStream supports precache, global and lumio badges", () 
 });
 
 test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async () => {
-    const { checkTorboxKey, getTorboxStreamUrl, TORBOX_API_BASE } = require("../lib/torbox");
+    const { checkTorboxKey, getTorboxStreamUrl, torboxApi } = require("../lib/torbox");
+    const origGet = torboxApi.get;
 
     // 1. Validation de clé invalide sans appel réseau
     const emptyKeyRes = await checkTorboxKey("");
     assert.equal(emptyKeyRes.valid, false);
 
-    // 2. Génération de permalink CDN redirect=true
-    const streamUrl = await getTorboxStreamUrl(1234, 5, "my_test_torbox_key", true);
-    assert.equal(
-        streamUrl,
-        `${TORBOX_API_BASE}/torrents/requestdl?token=my_test_torbox_key&torrent_id=1234&file_id=5&redirect=true`
-    );
+    try {
+        // 2. Résolution du lien CDN côté serveur : la clé ne doit JAMAIS apparaître dans l'URL/query
+        let capturedUrl = null;
+        let capturedConfig = null;
+        torboxApi.get = async function (url, config) {
+            capturedUrl = url;
+            capturedConfig = config;
+            return { status: 200, data: { success: true, data: "https://storage.torbox.app/cdn/video.mp4" } };
+        };
+
+        const streamUrl = await getTorboxStreamUrl(1234, 5, "my_test_torbox_key");
+        assert.equal(streamUrl, "https://storage.torbox.app/cdn/video.mp4");
+        assert.ok(capturedUrl && capturedUrl.includes("/torrents/requestdl"), "Doit appeler requestdl");
+        assert.ok(!capturedUrl.includes("token="), "La clé ne doit pas apparaître dans l'URL");
+        assert.ok(
+            !capturedConfig || !capturedConfig.params || !("token" in capturedConfig.params),
+            "La clé ne doit pas être passée en query string"
+        );
+        assert.equal(capturedConfig.headers.Authorization, "Bearer my_test_torbox_key");
+    } finally {
+        torboxApi.get = origGet;
+    }
 });
 
 test("Torbox - Helpers formatAioStream formats streams with [TB] badges and Torbox labels", () => {
@@ -1425,17 +1454,29 @@ test("Torbox - checkInstantTorbox parses object and list mock responses", async 
 
 test("Torbox - unlockTorboxFileTarget resolves tb_cloud and handles direct URLs", async () => {
     const { unlockTorboxFileTarget } = require("../lib/resolver");
+    const { torboxApi } = require("../lib/torbox");
+    const origGet = torboxApi.get;
 
     const direct = await unlockTorboxFileTarget("key123", "https://storage.torbox.app/cdn/video.mp4");
     assert.equal(direct, "https://storage.torbox.app/cdn/video.mp4");
 
-    const cloudRef = await unlockTorboxFileTarget("key123", "tb_cloud:456:78");
-    assert.ok(
-        cloudRef &&
-            cloudRef.includes("torrent_id=456") &&
-            cloudRef.includes("file_id=78") &&
-            cloudRef.includes("token=key123")
-    );
+    try {
+        let capturedConfig = null;
+        torboxApi.get = async function (url, config) {
+            capturedConfig = config;
+            return { status: 200, data: { success: true, data: "https://storage.torbox.app/cdn/resolved.mp4" } };
+        };
+
+        const cloudRef = await unlockTorboxFileTarget("key123", "tb_cloud:456:78");
+        assert.equal(cloudRef, "https://storage.torbox.app/cdn/resolved.mp4");
+        assert.ok(
+            !capturedConfig || !capturedConfig.params || !("token" in capturedConfig.params),
+            "La clé Torbox ne doit pas être passée en query string"
+        );
+        assert.equal(capturedConfig.headers.Authorization, "Bearer key123");
+    } finally {
+        torboxApi.get = origGet;
+    }
 });
 
 test("Lumio - handleStream queries Lumio on-demand and filters out error cards", async () => {
@@ -1662,22 +1703,18 @@ test("User API - Update retains existing API keys when inputs are left empty", a
         assert.equal(updateRes.status, 200);
         assert.equal(updateRes.data.success, true);
 
-        // 3. Vérification de la persistance des clés enregistrées
+        // 3. Vérification de la persistance des clés enregistrées (sans fuite des clés debrideur)
         const loginRes = await axios.post(`${base}/api/user/login`, {
             uuid,
             password: "updatePassword123"
         });
         assert.equal(loginRes.status, 200);
-        assert.equal(
-            loginRes.data.config.apiKey,
-            "original_alldebrid_key_abc123",
-            "La clé AllDebrid ne doit pas être écrasée par une chaîne vide"
-        );
-        assert.equal(
-            loginRes.data.config.torboxApiKey,
-            "original_torbox_key_xyz789",
-            "La clé Torbox ne doit pas être écrasée par une chaîne vide"
-        );
+        // Les clés debrideur complètes ne doivent PAS être renvoyées au client
+        assert.equal(loginRes.data.config.apiKey, undefined, "apiKey complet ne doit pas fuiter");
+        assert.equal(loginRes.data.config.torboxApiKey, undefined, "torboxApiKey complet ne doit pas fuiter");
+        // Seules les previews masquées sont renvoyées
+        assert.equal(loginRes.data.config.apiKeyPreview, "orig...c123");
+        assert.equal(loginRes.data.config.torboxApiKeyPreview, "orig...z789");
         assert.equal(
             loginRes.data.config.prowlarrKey,
             "original_prowlarr_key_456",

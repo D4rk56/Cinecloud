@@ -35,10 +35,17 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      - "3000:3000"
+      # Liaison sur localhost uniquement : l'accès externe passe par le tunnel Cloudflare
+      # (cloudflared atteint cinecloud via le réseau Docker interne, pas via ce port publié).
+      # Pour exposer derrière un reverse proxy, voir docker-compose.reverse-proxy.yml.
+      - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
+      # Confiance accordée aux en-têtes X-Forwarded-* (défaut: false = sûr).
+      # Derrière Cloudflare Tunnel / Nginx, mettez TRUST_PROXY=1 pour restaurer le
+      # rate-limiting par IP client (sinon tous les clients partagent la même limite).
+      # - TRUST_PROXY=1
       # Configuration Proxy WARP pour AllDebrid (supporte http://, https://, socks5://, socks5h://)
       # - Mode HTTP standard (défaut avec caomingjun/warp) : http://warp:1080
       # - Mode SOCKS5 avec DNS distant (recommandé pour éliminer les fuites/erreurs DNS) : socks5h://warp:1080
@@ -46,7 +53,7 @@ services:
       - WARP_PROXY=http://warp:1080
       # Clé secrète de chiffrement AES-256-GCM (auto-générée si omise)
       # - APP_SECRET=changez_ce_secret_pour_la_production
-      # Mot de passe du tableau de bord administrateur (/admin) - Défaut: admin123
+      # Mot de passe du tableau de bord administrateur (/admin) - Auto-généré si absent
       # - ADMIN_PASSWORD=votre_mot_de_passe_admin_securise
       # Synchronisation RSS d'arrière-plan Prowlarr (optionnel)
       # - PROWLARR_URL=http://prowlarr:9696
