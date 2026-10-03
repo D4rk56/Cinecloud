@@ -25,7 +25,7 @@ function resolveAdminPassword() {
     }
 
     if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
     }
 
     if (fs.existsSync(ADMIN_PASS_FILE)) {
@@ -46,16 +46,13 @@ function resolveAdminPassword() {
     } catch (e) {}
     process.env.ADMIN_PASSWORD = generated;
     console.log(`[Security] 🔐 Mot de passe administrateur sécurisé généré : ${generated}`);
-    console.log(`[Security] 💾 Sauvegardé dans data/.admin_password (définissez ADMIN_PASSWORD dans vos variables d'environnement pour personnaliser).`);
+    console.log(
+        `[Security] 💾 Sauvegardé dans data/.admin_password (définissez ADMIN_PASSWORD dans vos variables d'environnement pour personnaliser).`
+    );
     return generated;
 }
 
-const {
-    initConsoleInterceptors,
-    getLogs,
-    clearLogs,
-    runWithUser
-} = require("./lib/logger");
+const { initConsoleInterceptors, getLogs, clearLogs, runWithUser } = require("./lib/logger");
 
 // Interception des logs console pour le terminal en direct du panneau d'administration
 initConsoleInterceptors();
@@ -111,7 +108,8 @@ function getRequestProtocol(req) {
 }
 
 // En-tête navigateur par défaut pour les requêtes directes (TMDB, Cinemeta, Lumio)
-const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const BROWSER_UA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 axios.defaults.headers.common["User-Agent"] = BROWSER_UA;
 
 const app = express();
@@ -130,12 +128,13 @@ app.use((req, res, next) => {
     const pathUrl = req.path || "";
 
     // 1. Routes Stremio publiques & assets : CORS ouvert pour compatibilité Web Stremio et lecteurs externes
-    const isStremioRoute = pathUrl.includes("/manifest.json") ||
-                           pathUrl.includes("/catalog/") ||
-                           pathUrl.includes("/meta/") ||
-                           pathUrl.includes("/stream/") ||
-                           pathUrl === "/logo.png" ||
-                           pathUrl === "/background.png";
+    const isStremioRoute =
+        pathUrl.includes("/manifest.json") ||
+        pathUrl.includes("/catalog/") ||
+        pathUrl.includes("/meta/") ||
+        pathUrl.includes("/stream/") ||
+        pathUrl === "/logo.png" ||
+        pathUrl === "/background.png";
 
     if (isStremioRoute) {
         res.setHeader("Access-Control-Allow-Origin", "*");
@@ -165,7 +164,8 @@ app.use((req, res, next) => {
                 .split(",")
                 .map(o => o.trim().toLowerCase())
                 .filter(Boolean);
-            const isCustomAllowed = customAllowed.includes(origin.toLowerCase()) || customAllowed.includes(originHost.toLowerCase());
+            const isCustomAllowed =
+                customAllowed.includes(origin.toLowerCase()) || customAllowed.includes(originHost.toLowerCase());
 
             if (isSameHost || isLocal || isCustomAllowed) {
                 res.setHeader("Access-Control-Allow-Origin", origin);
@@ -286,15 +286,20 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             enabledCatalogs
         } = req.body;
 
-        const debridProvider = (req.body.debridProvider === "torbox")
-            ? "torbox"
-            : (req.body.debridProvider === "both" ? "both" : "alldebrid");
+        const debridProvider =
+            req.body.debridProvider === "torbox" ? "torbox" : req.body.debridProvider === "both" ? "both" : "alldebrid";
         const apiKey = req.body.apiKey ? req.body.apiKey.trim() : "";
-        const torboxApiKey = req.body.torboxApiKey ? req.body.torboxApiKey.trim() : (debridProvider === "torbox" ? apiKey : "");
+        const torboxApiKey = req.body.torboxApiKey
+            ? req.body.torboxApiKey.trim()
+            : debridProvider === "torbox"
+              ? apiKey
+              : "";
 
         if (debridProvider === "both") {
             if (!apiKey && !torboxApiKey) {
-                return res.status(400).json({ error: "Au moins une clé API (AllDebrid ou Torbox) est requise pour le mode combiné." });
+                return res
+                    .status(400)
+                    .json({ error: "Au moins une clé API (AllDebrid ou Torbox) est requise pour le mode combiné." });
             }
         } else if (debridProvider === "torbox") {
             if (!torboxApiKey) {
@@ -307,14 +312,19 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
         }
 
         if (!password || typeof password !== "string" || password.length < 4) {
-            return res.status(400).json({ error: "Un mot de passe d'au moins 4 caractères est requis pour sécuriser vos réglages." });
+            return res
+                .status(400)
+                .json({ error: "Un mot de passe d'au moins 4 caractères est requis pour sécuriser vos réglages." });
         }
 
         const uuid = crypto.randomUUID();
         const passwordHash = hashPassword(password);
-        const resolvedProwlarrMode = (prowlarrMode === "shared" || prowlarrMode === "private" || prowlarrMode === "local")
-            ? prowlarrMode
-            : ((prowlarrKey && prowlarrKey.trim() && prowlarrKey !== "off") ? "shared" : "local");
+        const resolvedProwlarrMode =
+            prowlarrMode === "shared" || prowlarrMode === "private" || prowlarrMode === "local"
+                ? prowlarrMode
+                : prowlarrKey && prowlarrKey.trim() && prowlarrKey !== "off"
+                  ? "shared"
+                  : "local";
 
         const configData = {
             debridProvider,
@@ -327,7 +337,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             resolutions: resolutions || "4k,1080p,720p,480p",
             hideUnknownLanguages: Boolean(hideUnknownLanguages),
             sortBy: sortBy === "size" || sortBy === "size_asc" ? sortBy : "quality",
-            maxSizeGb: (maxSizeGb !== undefined && maxSizeGb !== null && maxSizeGb !== "") ? Number(maxSizeGb) : 150,
+            maxSizeGb: maxSizeGb !== undefined && maxSizeGb !== null && maxSizeGb !== "" ? Number(maxSizeGb) : 150,
             maxStreams: Number(maxStreams) || 0,
             prioritizeCloud: req.body.prioritizeCloud !== undefined ? Boolean(req.body.prioritizeCloud) : true,
             prowlarrUrl: (prowlarrUrl && prowlarrUrl.trim()) || "http://prowlarr:9696",
@@ -337,7 +347,11 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             preValidateCache: req.body.preValidateCache !== undefined ? Boolean(req.body.preValidateCache) : true,
             disableCatalogs: Boolean(disableCatalogs),
             lumioUrl: (req.body.lumioUrl && req.body.lumioUrl.trim()) || "",
-            enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : ALL_CATALOGS.map(c => c.id))
+            enabledCatalogs: Array.isArray(enabledCatalogs)
+                ? enabledCatalogs
+                : enabledCatalogs
+                  ? enabledCatalogs.split(",")
+                  : ALL_CATALOGS.map(c => c.id)
         };
 
         const configEncrypted = encryptConfig(configData);
@@ -353,7 +367,9 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
         startProwlarrWorker();
 
         return runWithUser({ uuid, pseudo: configData.pseudo || "Utilisateur" }, () => {
-            console.log(`[User] Nouveau manifest créé avec succès : UUID ${uuid}${configData.pseudo ? ` (${configData.pseudo})` : ""} [Provider: ${configData.debridProvider}, Prowlarr: ${configData.prowlarrMode}]`);
+            console.log(
+                `[User] Nouveau manifest créé avec succès : UUID ${uuid}${configData.pseudo ? ` (${configData.pseudo})` : ""} [Provider: ${configData.debridProvider}, Prowlarr: ${configData.prowlarrMode}]`
+            );
             return res.json({
                 success: true,
                 uuid,
@@ -395,7 +411,9 @@ app.post("/api/user/login", authLimiter, (req, res) => {
                 ...config,
                 debridProvider: config.debridProvider || "alldebrid",
                 torboxApiKey: config.torboxApiKey || "",
-                torboxApiKeyPreview: config.torboxApiKey ? `${config.torboxApiKey.slice(0, 4)}...${config.torboxApiKey.slice(-4)}` : "",
+                torboxApiKeyPreview: config.torboxApiKey
+                    ? `${config.torboxApiKey.slice(0, 4)}...${config.torboxApiKey.slice(-4)}`
+                    : "",
                 pseudo: user.pseudo || config.pseudo || "",
                 prowlarrUrl: config.prowlarrUrl || "http://prowlarr:9696",
                 prowlarrKey: config.prowlarrKey || "",
@@ -450,36 +468,74 @@ app.post("/api/user/update", authLimiter, (req, res) => {
         }
 
         const currentConfig = decryptConfig(user.configEncrypted);
-        const resolvedProwlarrMode = (prowlarrMode === "shared" || prowlarrMode === "private" || prowlarrMode === "local")
-            ? prowlarrMode
-            : (currentConfig.prowlarrMode || user.prowlarrMode || "local");
+        const resolvedProwlarrMode =
+            prowlarrMode === "shared" || prowlarrMode === "private" || prowlarrMode === "local"
+                ? prowlarrMode
+                : currentConfig.prowlarrMode || user.prowlarrMode || "local";
 
-        const resolvedDebridProvider = debridProvider !== undefined
-            ? (debridProvider === "torbox" ? "torbox" : (debridProvider === "both" ? "both" : "alldebrid"))
-            : (currentConfig.debridProvider || "alldebrid");
+        const resolvedDebridProvider =
+            debridProvider !== undefined
+                ? debridProvider === "torbox"
+                    ? "torbox"
+                    : debridProvider === "both"
+                      ? "both"
+                      : "alldebrid"
+                : currentConfig.debridProvider || "alldebrid";
 
         const updatedConfig = {
             debridProvider: resolvedDebridProvider,
-            apiKey: (apiKey && typeof apiKey === "string" && apiKey.trim()) ? apiKey.trim() : (currentConfig.apiKey || ""),
-            torboxApiKey: (torboxApiKey && typeof torboxApiKey === "string" && torboxApiKey.trim()) ? torboxApiKey.trim() : (currentConfig.torboxApiKey || ""),
-            pseudo: pseudo !== undefined ? pseudo.trim() : (user.pseudo || currentConfig.pseudo || ""),
+            apiKey: apiKey && typeof apiKey === "string" && apiKey.trim() ? apiKey.trim() : currentConfig.apiKey || "",
+            torboxApiKey:
+                torboxApiKey && typeof torboxApiKey === "string" && torboxApiKey.trim()
+                    ? torboxApiKey.trim()
+                    : currentConfig.torboxApiKey || "",
+            pseudo: pseudo !== undefined ? pseudo.trim() : user.pseudo || currentConfig.pseudo || "",
             tmdbKey: tmdbKey !== undefined ? tmdbKey.trim() : currentConfig.tmdbKey,
-            cacheMode: cacheMode === "off" ? "off" : (cacheMode === "on" ? "on" : currentConfig.cacheMode || "on"),
+            cacheMode: cacheMode === "off" ? "off" : cacheMode === "on" ? "on" : currentConfig.cacheMode || "on",
             langPref: langPref !== undefined ? langPref : currentConfig.langPref,
-            resolutions: resolutions !== undefined ? resolutions : (currentConfig.resolutions || "4k,1080p,720p,480p"),
-            hideUnknownLanguages: hideUnknownLanguages !== undefined ? Boolean(hideUnknownLanguages) : Boolean(currentConfig.hideUnknownLanguages),
-            sortBy: sortBy !== undefined ? sortBy : (currentConfig.sortBy || "quality"),
-            maxSizeGb: maxSizeGb !== undefined ? (Number(maxSizeGb) || 0) : (currentConfig.maxSizeGb !== undefined ? currentConfig.maxSizeGb : 150),
-            maxStreams: maxStreams !== undefined ? (Number(maxStreams) || 0) : (currentConfig.maxStreams || 0),
-            prioritizeCloud: req.body.prioritizeCloud !== undefined ? Boolean(req.body.prioritizeCloud) : (currentConfig.prioritizeCloud !== undefined ? Boolean(currentConfig.prioritizeCloud) : true),
+            resolutions: resolutions !== undefined ? resolutions : currentConfig.resolutions || "4k,1080p,720p,480p",
+            hideUnknownLanguages:
+                hideUnknownLanguages !== undefined
+                    ? Boolean(hideUnknownLanguages)
+                    : Boolean(currentConfig.hideUnknownLanguages),
+            sortBy: sortBy !== undefined ? sortBy : currentConfig.sortBy || "quality",
+            maxSizeGb:
+                maxSizeGb !== undefined
+                    ? Number(maxSizeGb) || 0
+                    : currentConfig.maxSizeGb !== undefined
+                      ? currentConfig.maxSizeGb
+                      : 150,
+            maxStreams: maxStreams !== undefined ? Number(maxStreams) || 0 : currentConfig.maxStreams || 0,
+            prioritizeCloud:
+                req.body.prioritizeCloud !== undefined
+                    ? Boolean(req.body.prioritizeCloud)
+                    : currentConfig.prioritizeCloud !== undefined
+                      ? Boolean(currentConfig.prioritizeCloud)
+                      : true,
             prowlarrUrl: (prowlarrUrl && prowlarrUrl.trim()) || currentConfig.prowlarrUrl || "http://prowlarr:9696",
-            prowlarrKey: (prowlarrKey && typeof prowlarrKey === "string" && prowlarrKey.trim()) ? prowlarrKey.trim() : (currentConfig.prowlarrKey || "off"),
+            prowlarrKey:
+                prowlarrKey && typeof prowlarrKey === "string" && prowlarrKey.trim()
+                    ? prowlarrKey.trim()
+                    : currentConfig.prowlarrKey || "off",
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: allowDownload !== undefined ? Boolean(allowDownload) : Boolean(currentConfig.allowDownload),
-            preValidateCache: req.body.preValidateCache !== undefined ? Boolean(req.body.preValidateCache) : (currentConfig.preValidateCache !== false),
-            disableCatalogs: disableCatalogs !== undefined ? Boolean(disableCatalogs) : Boolean(currentConfig.disableCatalogs),
-            lumioUrl: req.body.lumioUrl !== undefined ? (req.body.lumioUrl ? req.body.lumioUrl.trim() : "") : (currentConfig.lumioUrl || ""),
-            enabledCatalogs: Array.isArray(enabledCatalogs) ? enabledCatalogs : (enabledCatalogs ? enabledCatalogs.split(",") : currentConfig.enabledCatalogs)
+            preValidateCache:
+                req.body.preValidateCache !== undefined
+                    ? Boolean(req.body.preValidateCache)
+                    : currentConfig.preValidateCache !== false,
+            disableCatalogs:
+                disableCatalogs !== undefined ? Boolean(disableCatalogs) : Boolean(currentConfig.disableCatalogs),
+            lumioUrl:
+                req.body.lumioUrl !== undefined
+                    ? req.body.lumioUrl
+                        ? req.body.lumioUrl.trim()
+                        : ""
+                    : currentConfig.lumioUrl || "",
+            enabledCatalogs: Array.isArray(enabledCatalogs)
+                ? enabledCatalogs
+                : enabledCatalogs
+                  ? enabledCatalogs.split(",")
+                  : currentConfig.enabledCatalogs
         };
 
         updateUserConfig(uuid.trim(), encryptConfig(updatedConfig), updatedConfig.pseudo, updatedConfig.prowlarrMode);
@@ -493,7 +549,9 @@ app.post("/api/user/update", authLimiter, (req, res) => {
         startProwlarrWorker();
 
         return runWithUser({ uuid: user.uuid, pseudo: updatedConfig.pseudo || "Utilisateur" }, () => {
-            console.log(`[User] Configuration mise à jour pour l'UUID ${uuid} [Provider: ${updatedConfig.debridProvider}, Prowlarr: ${updatedConfig.prowlarrMode}]`);
+            console.log(
+                `[User] Configuration mise à jour pour l'UUID ${uuid} [Provider: ${updatedConfig.debridProvider}, Prowlarr: ${updatedConfig.prowlarrMode}]`
+            );
             return res.json({ success: true, message: "Réglages mis à jour avec succès !" });
         });
     } catch (err) {
@@ -523,7 +581,7 @@ app.post("/api/check/lumio", apiCheckLimiter, async (req, res) => {
         const resp = await axios.get(raw, {
             headers: {
                 "User-Agent": BROWSER_UA,
-                "Accept": "application/json"
+                Accept: "application/json"
             },
             timeout: 5000
         });
@@ -537,10 +595,23 @@ app.post("/api/check/lumio", apiCheckLimiter, async (req, res) => {
                 description: resp.data.description || ""
             });
         }
-        return res.json({ success: false, valid: false, error: "Réponse reçue mais le format de manifest Stremio est invalide" });
+        return res.json({
+            success: false,
+            valid: false,
+            error: "Réponse reçue mais le format de manifest Stremio est invalide"
+        });
     } catch (err) {
-        const respDataStr = err.response?.data ? (typeof err.response.data === "string" ? err.response.data : JSON.stringify(err.response.data)) : "";
-        if (err.response && (err.response.status === 530 || respDataStr.includes("1033") || respDataStr.includes("Cloudflare Tunnel error"))) {
+        const respDataStr = err.response?.data
+            ? typeof err.response.data === "string"
+                ? err.response.data
+                : JSON.stringify(err.response.data)
+            : "";
+        if (
+            err.response &&
+            (err.response.status === 530 ||
+                respDataStr.includes("1033") ||
+                respDataStr.includes("Cloudflare Tunnel error"))
+        ) {
             return res.json({
                 success: false,
                 valid: false,
@@ -549,12 +620,18 @@ app.post("/api/check/lumio", apiCheckLimiter, async (req, res) => {
             });
         }
         if (err.response && err.response.status === 404) {
-            return res.json({ success: false, valid: false, error: "Manifest introuvable (HTTP 404). Vérifiez l'URL de votre compte mylumio.tv." });
+            return res.json({
+                success: false,
+                valid: false,
+                error: "Manifest introuvable (HTTP 404). Vérifiez l'URL de votre compte mylumio.tv."
+            });
         }
         return res.json({
             success: false,
             valid: false,
-            error: err.response ? `Erreur HTTP ${err.response.status} de Lumio` : (err.message || "Impossible de joindre Lumio")
+            error: err.response
+                ? `Erreur HTTP ${err.response.status} de Lumio`
+                : err.message || "Impossible de joindre Lumio"
         });
     }
 });
@@ -709,20 +786,26 @@ app.post("/api/admin/settings", requireAdmin, validateAdmin({ body: settingsSche
     res.json({ success: true, settings: updated });
 });
 
-app.post("/api/admin/cache/clear", requireAdmin, adminActionLimiter, validateAdmin({ body: cacheClearSchema }), (req, res) => {
-    const { target } = req.body;
-    let cleared = 0;
-    if (target === "torrents" || target === "all") {
-        cleared += clearCachedTorrents();
+app.post(
+    "/api/admin/cache/clear",
+    requireAdmin,
+    adminActionLimiter,
+    validateAdmin({ body: cacheClearSchema }),
+    (req, res) => {
+        const { target } = req.body;
+        let cleared = 0;
+        if (target === "torrents" || target === "all") {
+            cleared += clearCachedTorrents();
+        }
+        if (target === "movies" || target === "all") {
+            cleared += clearMoviesCache();
+        }
+        if (target === "searches" || target === "all") {
+            cleared += clearSearchQueries();
+        }
+        res.json({ success: true, cleared });
     }
-    if (target === "movies" || target === "all") {
-        cleared += clearMoviesCache();
-    }
-    if (target === "searches" || target === "all") {
-        cleared += clearSearchQueries();
-    }
-    res.json({ success: true, cleared });
-});
+);
 
 // Sonde / Test de santé en direct des APIs AllDebrid et Torbox
 app.get("/api/admin/health/debrid", requireAdmin, adminActionLimiter, async (req, res) => {
@@ -782,7 +865,7 @@ app.get("/api/admin/backup", requireAdmin, adminActionLimiter, (req, res) => {
     }
     checkpointDatabase();
     const dateStr = new Date().toISOString().slice(0, 10);
-    res.download(SQLITE_FILE, `cinecloud-backup-${dateStr}.db`, (err) => {
+    res.download(SQLITE_FILE, `cinecloud-backup-${dateStr}.db`, err => {
         if (err && !res.headersSent) {
             res.status(500).json({ error: "Erreur lors du téléchargement du backup." });
         }
@@ -808,61 +891,72 @@ app.post("/api/admin/maintenance/vacuum", requireAdmin, adminActionLimiter, asyn
 });
 
 // Déclenchement forcé immédiat du cycle RSS Prowlarr crowdsourcing
-app.post(["/api/admin/prowlarr/sync", "/api/admin/maintenance/sync-prowlarr"], requireAdmin, adminActionLimiter, async (req, res) => {
-    const { forceSyncProwlarrCrowdsourcing } = require("./lib/prowlarr-worker");
-    const result = await forceSyncProwlarrCrowdsourcing();
-    res.json(result);
-});
+app.post(
+    ["/api/admin/prowlarr/sync", "/api/admin/maintenance/sync-prowlarr"],
+    requireAdmin,
+    adminActionLimiter,
+    async (req, res) => {
+        const { forceSyncProwlarrCrowdsourcing } = require("./lib/prowlarr-worker");
+        const result = await forceSyncProwlarrCrowdsourcing();
+        res.json(result);
+    }
+);
 
 // Purge globale des magnets AllDebrid bloqués
-app.post("/api/admin/cleanup-magnets", requireAdmin, adminActionLimiter, validateAdmin({ body: cleanupMagnetsSchema }), async (req, res) => {
-    try {
-        const { apiKey } = req.body || {};
-        if (apiKey) {
-            const result = await alldebrid.cleanupPendingMagnets(apiKey);
-            return res.json(result);
-        }
-
-        let totalPurged = 0;
-        const cleanedKeys = new Set();
-        const defaultKey = process.env.ALLDEBRID_API_KEY;
-        if (defaultKey) {
-            cleanedKeys.add(defaultKey);
-            const rDef = await alldebrid.cleanupPendingMagnets(defaultKey);
-            totalPurged += (rDef.deletedCount || 0);
-        }
-
-        const users = getAllUsersAdmin();
-        for (const u of users) {
-            const user = getUserByUuid(u.uuid);
-            if (user && user.configEncrypted) {
-                try {
-                    const cfg = decryptConfig(user.configEncrypted);
-                    if (cfg && cfg.apiKey && !cleanedKeys.has(cfg.apiKey)) {
-                        cleanedKeys.add(cfg.apiKey);
-                        const r = await alldebrid.cleanupPendingMagnets(cfg.apiKey);
-                        totalPurged += (r.deletedCount || 0);
-                    }
-                } catch (e) {}
+app.post(
+    "/api/admin/cleanup-magnets",
+    requireAdmin,
+    adminActionLimiter,
+    validateAdmin({ body: cleanupMagnetsSchema }),
+    async (req, res) => {
+        try {
+            const { apiKey } = req.body || {};
+            if (apiKey) {
+                const result = await alldebrid.cleanupPendingMagnets(apiKey);
+                return res.json(result);
             }
+
+            let totalPurged = 0;
+            const cleanedKeys = new Set();
+            const defaultKey = process.env.ALLDEBRID_API_KEY;
+            if (defaultKey) {
+                cleanedKeys.add(defaultKey);
+                const rDef = await alldebrid.cleanupPendingMagnets(defaultKey);
+                totalPurged += rDef.deletedCount || 0;
+            }
+
+            const users = getAllUsersAdmin();
+            for (const u of users) {
+                const user = getUserByUuid(u.uuid);
+                if (user && user.configEncrypted) {
+                    try {
+                        const cfg = decryptConfig(user.configEncrypted);
+                        if (cfg && cfg.apiKey && !cleanedKeys.has(cfg.apiKey)) {
+                            cleanedKeys.add(cfg.apiKey);
+                            const r = await alldebrid.cleanupPendingMagnets(cfg.apiKey);
+                            totalPurged += r.deletedCount || 0;
+                        }
+                    } catch (e) {}
+                }
+            }
+            return res.json({
+                success: true,
+                deletedCount: totalPurged,
+                message: `${totalPurged} magnet(s) bloqué(s) AllDebrid supprimé(s) au total.`
+            });
+        } catch (err) {
+            console.error("[Admin] Erreur cleanup-magnets :", err.message);
+            return res.status(500).json({ error: "Erreur lors de la purge admin des magnets AllDebrid." });
         }
-        return res.json({
-            success: true,
-            deletedCount: totalPurged,
-            message: `${totalPurged} magnet(s) bloqué(s) AllDebrid supprimé(s) au total.`
-        });
-    } catch (err) {
-        console.error("[Admin] Erreur cleanup-magnets :", err.message);
-        return res.status(500).json({ error: "Erreur lors de la purge admin des magnets AllDebrid." });
     }
-});
+);
 
 // =============================================================================
 // 4. ENDPOINT DE RÉSOLUTION LAZY (VALIDATION & FAILOVER INSTANTANÉ)
 // =============================================================================
 app.get("/resolve/:userRef/:imdbId/:fileRef(*)", resolveLimiter, (req, res) => {
     const userRef = req.params.userRef;
-    const user = (userRef && userRef.length === 36 && userRef.includes("-")) ? getUserByUuid(userRef) : null;
+    const user = userRef && userRef.length === 36 && userRef.includes("-") ? getUserByUuid(userRef) : null;
     const tag = user ? { uuid: user.uuid, pseudo: user.pseudo || "Utilisateur" } : { uuid: userRef, pseudo: "Client" };
     return runWithUser(tag, () => handleResolve(req, res));
 });
@@ -908,7 +1002,7 @@ app.get("/:uuid/catalog/:type/:id/:extra.json", async (req, res) => {
     if (!config) return res.status(404).json({ error: "Addon introuvable." });
     try {
         const extraParam = req.params.extra;
-        const extraObj = (req.query && Object.keys(req.query).length > 0) ? { extraParam, ...req.query } : extraParam;
+        const extraObj = req.query && Object.keys(req.query).length > 0 ? { extraParam, ...req.query } : extraParam;
         const result = await handleCatalog(config, req.params.type, req.params.id, cache, extraObj);
         res.json(result);
     } catch (err) {
@@ -966,52 +1060,64 @@ app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/ma
     res.json(handleManifest(config, baseUrl));
 });
 
-app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id.json", async (req, res) => {
-    const config = parseLegacyConfig(req.params);
-    try {
-        const extra = req.query && Object.keys(req.query).length > 0 ? req.query : null;
-        const result = await handleCatalog(config, req.params.type, req.params.id, cache, extra);
-        res.json(result);
-    } catch (err) {
-        console.error(`[Legacy Catalog] Erreur ${req.params.id}:`, err.message);
-        res.json({ metas: [] });
+app.get(
+    "/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id.json",
+    async (req, res) => {
+        const config = parseLegacyConfig(req.params);
+        try {
+            const extra = req.query && Object.keys(req.query).length > 0 ? req.query : null;
+            const result = await handleCatalog(config, req.params.type, req.params.id, cache, extra);
+            res.json(result);
+        } catch (err) {
+            console.error(`[Legacy Catalog] Erreur ${req.params.id}:`, err.message);
+            res.json({ metas: [] });
+        }
     }
-});
+);
 
-app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id/:extra.json", async (req, res) => {
-    const config = parseLegacyConfig(req.params);
-    try {
-        const extraParam = req.params.extra;
-        const extraObj = (req.query && Object.keys(req.query).length > 0) ? { extraParam, ...req.query } : extraParam;
-        const result = await handleCatalog(config, req.params.type, req.params.id, cache, extraObj);
-        res.json(result);
-    } catch (err) {
-        res.json({ metas: [] });
+app.get(
+    "/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/catalog/:type/:id/:extra.json",
+    async (req, res) => {
+        const config = parseLegacyConfig(req.params);
+        try {
+            const extraParam = req.params.extra;
+            const extraObj = req.query && Object.keys(req.query).length > 0 ? { extraParam, ...req.query } : extraParam;
+            const result = await handleCatalog(config, req.params.type, req.params.id, cache, extraObj);
+            res.json(result);
+        } catch (err) {
+            res.json({ metas: [] });
+        }
     }
-});
+);
 
-app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/meta/:type/:id.json", async (req, res) => {
-    const config = parseLegacyConfig(req.params);
-    try {
-        const result = await handleMeta(config, req.params.type, req.params.id, cache);
-        res.json(result);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+app.get(
+    "/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/meta/:type/:id.json",
+    async (req, res) => {
+        const config = parseLegacyConfig(req.params);
+        try {
+            const result = await handleMeta(config, req.params.type, req.params.id, cache);
+            res.json(result);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
     }
-});
+);
 
-app.get("/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/stream/:type/:id.json", async (req, res) => {
-    const config = parseLegacyConfig(req.params);
-    try {
-        const protocol = getRequestProtocol(req);
-        const baseUrl = `${protocol}://${req.get("host")}`;
-        const legacyRef = "k_" + Buffer.from(config.apiKey).toString("base64url");
-        const result = await handleStream(config, req.params.type, req.params.id, cache, baseUrl, legacyRef);
-        res.json(result);
-    } catch (err) {
-        res.json({ streams: [] });
+app.get(
+    "/:apiKey/:tmdbKey/:cacheMode/:langPref/:prowlarrKey/:enabledCatalogs/stream/:type/:id.json",
+    async (req, res) => {
+        const config = parseLegacyConfig(req.params);
+        try {
+            const protocol = getRequestProtocol(req);
+            const baseUrl = `${protocol}://${req.get("host")}`;
+            const legacyRef = "k_" + Buffer.from(config.apiKey).toString("base64url");
+            const result = await handleStream(config, req.params.type, req.params.id, cache, baseUrl, legacyRef);
+            res.json(result);
+        } catch (err) {
+            res.json({ streams: [] });
+        }
     }
-});
+);
 
 // =============================================================================
 // 7. INTERFACE WEB & STATIQUES (STREAM-FUSION & ADMIN)
@@ -1062,9 +1168,12 @@ startProwlarrWorker();
 // Purge périodique du cache de torrents (TTL 30 jours) déportée dans le worker
 const { asyncPurgeOldCachedTorrents } = require("./lib/db");
 asyncPurgeOldCachedTorrents();
-const purgeTimer = setInterval(() => {
-    asyncPurgeOldCachedTorrents();
-}, 24 * 60 * 60 * 1000);
+const purgeTimer = setInterval(
+    () => {
+        asyncPurgeOldCachedTorrents();
+    },
+    24 * 60 * 60 * 1000
+);
 if (purgeTimer && purgeTimer.unref) {
     purgeTimer.unref();
 }

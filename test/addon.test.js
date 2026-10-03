@@ -11,21 +11,11 @@ const {
     generateFallbackPoster
 } = require("../lib/helpers");
 
-const {
-    hashPassword,
-    verifyPassword,
-    encryptConfig,
-    decryptConfig
-} = require("../lib/crypto");
+const { hashPassword, verifyPassword, encryptConfig, decryptConfig } = require("../lib/crypto");
 
-const {
-    pickBestVideoFile
-} = require("../lib/resolver");
+const { pickBestVideoFile } = require("../lib/resolver");
 
-const {
-    handleManifest,
-    handleCatalog
-} = require("../lib/stremio");
+const { handleManifest, handleCatalog } = require("../lib/stremio");
 
 const {
     upsertCachedTorrent,
@@ -36,24 +26,14 @@ const {
     getSharedProwlarrInstances
 } = require("../lib/db");
 
-const {
-    isLocalOrPrivateUrl
-} = require("../lib/prowlarr-worker");
+const { isLocalOrPrivateUrl } = require("../lib/prowlarr-worker");
 
-const {
-    logger,
-    runWithUser
-} = require("../lib/logger");
+const { logger, runWithUser } = require("../lib/logger");
 
-const {
-    filterAndSortStreams
-} = require("../lib/helpers");
+const { filterAndSortStreams } = require("../lib/helpers");
 
 const vm = require("node:vm");
-const {
-    renderConfigPage,
-    renderAdminPage
-} = require("../lib/ui");
+const { renderConfigPage, renderAdminPage } = require("../lib/ui");
 
 test("Helpers - parseSeasonEpisode handles various delimiters", () => {
     assert.deepEqual(parseSeasonEpisode("Breaking.Bad.S01E05.mkv"), { season: 1, episode: 5 });
@@ -113,7 +93,11 @@ test("Resolver - pickBestVideoFile handles ad_series format without NaN", () => 
     // Format cloud séries : ad_series:<nom>:<saison>:<episode>
     const matchCloud = pickBestVideoFile(files, "ad_series:Breaking%20Bad:2:5");
     assert.ok(matchCloud, "Doit trouver le fichier");
-    assert.equal(matchCloud.n, "Breaking.Bad.S02E05.720p.mkv", "Doit sélectionner l'épisode 5 et non le plus gros fichier");
+    assert.equal(
+        matchCloud.n,
+        "Breaking.Bad.S02E05.720p.mkv",
+        "Doit sélectionner l'épisode 5 et non le plus gros fichier"
+    );
 
     // Format IMDb standard : tt...:<saison>:<episode>
     const matchImdb = pickBestVideoFile(files, "tt0903747:2:5");
@@ -147,7 +131,11 @@ test("Crypto - Password hashing and AES-256-GCM encryption", () => {
 });
 
 test("Stremio - handleManifest returns valid manifest with Cinécloud branding, logo and configure button", () => {
-    const manifest = handleManifest({ enabledCatalogs: "my_ad_magnets,my_ad_links" }, "https://cinecloud.fr", "test-uuid");
+    const manifest = handleManifest(
+        { enabledCatalogs: "my_ad_magnets,my_ad_links" },
+        "https://cinecloud.fr",
+        "test-uuid"
+    );
     assert.equal(manifest.name, "Cinécloud");
     assert.equal(manifest.id, "org.nuvio.alldebrid");
     assert.equal(manifest.version, "2.4.0");
@@ -182,7 +170,10 @@ test("Database - Cached torrents upsert, retrieval and purge", () => {
 
     deleteCachedTorrent(testHash);
     const afterDelete = getCachedTorrentsByImdb(imdbId);
-    assert.ok(!afterDelete.some(t => t.infoHash.toLowerCase() === testHash.toLowerCase()), "Le torrent doit être supprimé");
+    assert.ok(
+        !afterDelete.some(t => t.infoHash.toLowerCase() === testHash.toLowerCase()),
+        "Le torrent doit être supprimé"
+    );
 
     const purged = purgeOldCachedTorrents(30 * 86400);
     assert.ok(typeof purged === "number", "La purge doit retourner un nombre");
@@ -190,7 +181,7 @@ test("Database - Cached torrents upsert, retrieval and purge", () => {
 
 test("Helpers - imdbIdToTitle handles series and movies with Cinemeta fallback", async () => {
     const { imdbIdToTitle } = require("../lib/helpers");
-    
+
     // Breaking Bad (série)
     const seriesTitle = await imdbIdToTitle("tt0903747", null, "series");
     assert.ok(seriesTitle, "Doit trouver un titre pour la série");
@@ -204,23 +195,35 @@ test("Helpers - imdbIdToTitle handles series and movies with Cinemeta fallback",
 
 test("Prowlarr Worker - resolveReleaseImdbId prioritizes series for TV releases", async () => {
     const { resolveReleaseImdbId } = require("../lib/prowlarr-worker");
-    
+
     // Release avec motif de série S01E01
     const imdbSeries = await resolveReleaseImdbId("Breaking Bad S01E01 1080p", true);
-    assert.equal(imdbSeries, "tt0903747", "Doit associer la série Breaking Bad tt0903747 et non le film El Camino tt9243946");
+    assert.equal(
+        imdbSeries,
+        "tt0903747",
+        "Doit associer la série Breaking Bad tt0903747 et non le film El Camino tt9243946"
+    );
 });
 
 test("Helpers - isConfidentTitleMatch rejects error strings and unrelated titles", () => {
     const { isConfidentTitleMatch } = require("../lib/helpers");
 
     // Faux positifs critiques identifiés chez l'utilisateur
-    assert.equal(isConfidentTitleMatch("not allowed", "Men Not Allowed"), false, "Doit rejeter 'not allowed' mappé vers Men Not Allowed");
+    assert.equal(
+        isConfidentTitleMatch("not allowed", "Men Not Allowed"),
+        false,
+        "Doit rejeter 'not allowed' mappé vers Men Not Allowed"
+    );
     assert.equal(isConfidentTitleMatch("method not allowed", "Men Not Allowed"), false);
     assert.equal(isConfidentTitleMatch("404", "404 Not Found"), false);
     assert.equal(isConfidentTitleMatch("archive", "Rare Exports"), false);
     assert.equal(isConfidentTitleMatch("ipnotallowed", "Ip Not Allowed"), false, "Doit rejeter 'ipnotallowed'");
     assert.equal(isConfidentTitleMatch("ip not allowed", "Ip Not Allowed"), false, "Doit rejeter 'ip not allowed'");
-    assert.equal(isConfidentTitleMatch("generic_ip_not_allowed", "Some Title"), false, "Doit rejeter 'generic_ip_not_allowed'");
+    assert.equal(
+        isConfidentTitleMatch("generic_ip_not_allowed", "Some Title"),
+        false,
+        "Doit rejeter 'generic_ip_not_allowed'"
+    );
 
     // Titres légitimes avec ponctuation ou variantes
     assert.equal(isConfidentTitleMatch("Avengers Endgame", "Avengers: Endgame"), true);
@@ -231,22 +234,60 @@ test("Helpers - isConfidentTitleMatch rejects error strings and unrelated titles
     assert.equal(isConfidentTitleMatch("Gladiator II", "Gladiator", "2024", "2000"), false);
 
     // Rejet strict des suites et chiffres romains même sans années fournies
-    assert.equal(isConfidentTitleMatch("Gladiator", "Gladiator II"), false, "Gladiator ne doit pas matcher Gladiator II");
-    assert.equal(isConfidentTitleMatch("Gladiator II", "Gladiator"), false, "Gladiator II ne doit pas matcher Gladiator");
+    assert.equal(
+        isConfidentTitleMatch("Gladiator", "Gladiator II"),
+        false,
+        "Gladiator ne doit pas matcher Gladiator II"
+    );
+    assert.equal(
+        isConfidentTitleMatch("Gladiator II", "Gladiator"),
+        false,
+        "Gladiator II ne doit pas matcher Gladiator"
+    );
     assert.equal(isConfidentTitleMatch("Avatar", "Avatar 2"), false, "Avatar ne doit pas matcher Avatar 2");
     assert.equal(isConfidentTitleMatch("Dune", "Dune: Part Two"), false, "Dune ne doit pas matcher Dune Part Two");
-    assert.equal(isConfidentTitleMatch("Dune Part Two", "Dune: Part Two"), true, "Dune Part Two doit matcher Dune: Part Two");
-    assert.equal(isConfidentTitleMatch("Blade Runner", "Blade Runner 2049"), false, "Blade Runner ne doit pas matcher Blade Runner 2049");
-    assert.equal(isConfidentTitleMatch("Spider Man", "Spider Man No Way Home"), false, "Spider Man ne doit pas matcher Spider Man No Way Home");
+    assert.equal(
+        isConfidentTitleMatch("Dune Part Two", "Dune: Part Two"),
+        true,
+        "Dune Part Two doit matcher Dune: Part Two"
+    );
+    assert.equal(
+        isConfidentTitleMatch("Blade Runner", "Blade Runner 2049"),
+        false,
+        "Blade Runner ne doit pas matcher Blade Runner 2049"
+    );
+    assert.equal(
+        isConfidentTitleMatch("Spider Man", "Spider Man No Way Home"),
+        false,
+        "Spider Man ne doit pas matcher Spider Man No Way Home"
+    );
 });
 
 test("Helpers - filterAndSortStreams prioritizes cloud streams when prioritizeCloud is true", () => {
     const { filterAndSortStreams } = require("../lib/helpers");
 
     const streams = [
-        { title: "Release 4K Prowlarr", _size: 20 * 1024 * 1024 * 1024, _resolution: "4k", _lang: "vff", _isCloud: false },
-        { title: "Release 1080p Cloud", _size: 4 * 1024 * 1024 * 1024, _resolution: "1080p", _lang: "vff", _isCloud: true },
-        { title: "Release 720p Lumio", _size: 2 * 1024 * 1024 * 1024, _resolution: "720p", _lang: "vff", _isCloud: false }
+        {
+            title: "Release 4K Prowlarr",
+            _size: 20 * 1024 * 1024 * 1024,
+            _resolution: "4k",
+            _lang: "vff",
+            _isCloud: false
+        },
+        {
+            title: "Release 1080p Cloud",
+            _size: 4 * 1024 * 1024 * 1024,
+            _resolution: "1080p",
+            _lang: "vff",
+            _isCloud: true
+        },
+        {
+            title: "Release 720p Lumio",
+            _size: 2 * 1024 * 1024 * 1024,
+            _resolution: "720p",
+            _lang: "vff",
+            _isCloud: false
+        }
     ];
 
     // Sans priorisation cloud : 4K passe en premier
@@ -277,12 +318,18 @@ test("Catalogs - Recommendations catalogs are present in ALL_CATALOGS and manife
     const { ALL_CATALOGS } = require("../lib/helpers");
     const recoIds = ["my_ad_reco_movies", "my_ad_reco_series", "my_ad_reco_animes", "my_ad_reco_animes_movies"];
     for (const rid of recoIds) {
-        assert.ok(ALL_CATALOGS.some(c => c.id === rid), `Catalogue ${rid} doit être défini dans ALL_CATALOGS`);
+        assert.ok(
+            ALL_CATALOGS.some(c => c.id === rid),
+            `Catalogue ${rid} doit être défini dans ALL_CATALOGS`
+        );
     }
 
     const manifestAll = handleManifest({ enabledCatalogs: "all" });
     for (const rid of recoIds) {
-        assert.ok(manifestAll.catalogs.some(c => c.id === rid), `Catalogue ${rid} doit être actif dans le manifeste`);
+        assert.ok(
+            manifestAll.catalogs.some(c => c.id === rid),
+            `Catalogue ${rid} doit être actif dans le manifeste`
+        );
     }
 });
 
@@ -314,7 +361,12 @@ test("Catalogs - handleCatalog generates recommendations with valid metadata", a
     const { handleCatalog } = require("../lib/stremio");
     const { TMDB_KEY_DEFAULT } = require("../lib/helpers");
 
-    const res = await handleCatalog({ apiKey: "test_key", tmdbKey: TMDB_KEY_DEFAULT }, "movie", "my_ad_reco_movies", {});
+    const res = await handleCatalog(
+        { apiKey: "test_key", tmdbKey: TMDB_KEY_DEFAULT },
+        "movie",
+        "my_ad_reco_movies",
+        {}
+    );
     assert.ok(res && Array.isArray(res.metas), "Doit retourner une liste de métas");
     assert.ok(res.metas.length > 0, "Doit contenir des recommandations même sans historique");
     assert.ok(res.metas[0].id.startsWith("tt"), "Chaque recommandation doit avoir un identifiant IMDb valide");
@@ -372,7 +424,7 @@ test("Resolver - handleResolve redirects 302 directly to downloadUrl without dro
             redirectCode = code;
             redirectUrl = url;
         },
-        status: (code) => {
+        status: code => {
             statusCode = code;
             return {
                 json: () => {},
@@ -384,7 +436,11 @@ test("Resolver - handleResolve redirects 302 directly to downloadUrl without dro
     try {
         await handleResolve(req, res);
         assert.equal(redirectCode, 302, "Doit faire une redirection 302 vers le CDN");
-        assert.equal(redirectUrl, "https://mock.debrid.it/dl/testfile.mkv", "Doit rediriger vers l'URL de téléchargement");
+        assert.equal(
+            redirectUrl,
+            "https://mock.debrid.it/dl/testfile.mkv",
+            "Doit rediriger vers l'URL de téléchargement"
+        );
     } finally {
         alldebrid.alldebridApi.post = originalPost;
         deleteUser(testUuid);
@@ -396,7 +452,7 @@ test("Prowlarr On-Demand - searchProwlarrOnDemand handles queries and returns fo
     const axios = require("axios");
     const originalGet = axios.get;
 
-    axios.get = async (url) => {
+    axios.get = async url => {
         if (url.includes("api/v1/search")) {
             return {
                 data: [
@@ -462,7 +518,11 @@ test("Catalogs - handleCatalog correctly applies skip pagination on recommendati
     assert.ok(paginatedRes && Array.isArray(paginatedRes.metas), "Doit retourner une liste paginée");
     assert.equal(paginatedRes.metas.length, Math.max(0, fullRes.metas.length - 5));
     if (fullRes.metas.length > 5) {
-        assert.equal(paginatedRes.metas[0].id, fullRes.metas[5].id, "Le premier élément après skip=5 doit correspondre au 6ème élément global");
+        assert.equal(
+            paginatedRes.metas[0].id,
+            fullRes.metas[5].id,
+            "Le premier élément après skip=5 doit correspondre au 6ème élément global"
+        );
     }
 });
 
@@ -506,8 +566,14 @@ test("Prowlarr On-Demand - query sanitization cleans punctuation like colons and
         });
 
         assert.ok(interceptedUrl, "L'URL Prowlarr doit avoir été appelée");
-        assert.ok(!interceptedUrl.includes("%3A") && !interceptedUrl.includes("%27"), "La recherche ne doit pas contenir de deux-points ou d'apostrophes encodés");
-        assert.ok(interceptedHeaders && interceptedHeaders["X-Api-Key"] === "mock_prowlarr_key", "Doit inclure l'en-tête X-Api-Key");
+        assert.ok(
+            !interceptedUrl.includes("%3A") && !interceptedUrl.includes("%27"),
+            "La recherche ne doit pas contenir de deux-points ou d'apostrophes encodés"
+        );
+        assert.ok(
+            interceptedHeaders && interceptedHeaders["X-Api-Key"] === "mock_prowlarr_key",
+            "Doit inclure l'en-tête X-Api-Key"
+        );
         assert.equal(results.length, 1);
         assert.equal(results[0].indexer, "Ygg");
 
@@ -559,7 +625,11 @@ test("Catalogs - handleCatalog groups series into folder cards instead of indivi
         const testCache = { series: {}, movies: {} };
         const result = await handleCatalog({ apiKey: "test" }, "series", "my_ad_magnets_series", testCache);
         assert.ok(result && Array.isArray(result.metas), "Doit retourner une liste de métas");
-        assert.equal(result.metas.length, 2, "Doit regrouper les 4 épisodes en exactement 2 dossiers séries (Breaking Bad et Better Call Saul)");
+        assert.equal(
+            result.metas.length,
+            2,
+            "Doit regrouper les 4 épisodes en exactement 2 dossiers séries (Breaking Bad et Better Call Saul)"
+        );
         const bbCard = result.metas.find(m => m.name.toLowerCase().includes("breaking bad"));
         assert.ok(bbCard, "Le dossier Breaking Bad doit être présent");
         assert.match(bbCard.description, /Dossier Série • 3 épisode\(s\) disponible\(s\)/);
@@ -604,9 +674,18 @@ test("Server - Logo, Background and Configure routes are defined", () => {
         }
     });
 
-    assert.ok(routes.some(r => r.path === "/logo.png"), "Route /logo.png doit être définie");
-    assert.ok(routes.some(r => r.path === "/background.png"), "Route /background.png doit être définie");
-    assert.ok(routes.some(r => r.path === "/:uuid/configure"), "Route /:uuid/configure doit être définie");
+    assert.ok(
+        routes.some(r => r.path === "/logo.png"),
+        "Route /logo.png doit être définie"
+    );
+    assert.ok(
+        routes.some(r => r.path === "/background.png"),
+        "Route /background.png doit être définie"
+    );
+    assert.ok(
+        routes.some(r => r.path === "/:uuid/configure"),
+        "Route /:uuid/configure doit être définie"
+    );
 });
 
 test("AllDebrid - createProxyAgent handles socks5, socks5h, http and scheme normalization", () => {
@@ -661,7 +740,10 @@ test("Helpers - formatAioStream removes FR SUB badge and displays filename in ri
     assert.ok(!formatted.name.includes("(FR SUB)"), "Ne doit pas contenir (FR SUB)");
     assert.ok(!formatted.name.includes("(FR Dub)"), "Ne doit pas contenir (FR Dub)");
     // Vérification que le nom de fichier est présent dans la colonne de droite au lieu de 'Mon cloud'
-    assert.ok(formatted.title.includes("📄 Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv"), "Doit afficher le nom du fichier");
+    assert.ok(
+        formatted.title.includes("📄 Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv"),
+        "Doit afficher le nom du fichier"
+    );
     assert.ok(!formatted.title.includes("Mon Cloud"), "Ne doit plus afficher 'Mon Cloud'");
 });
 
@@ -704,7 +786,11 @@ test("Helpers - filterAndSortStreams filters by resolution, language and limits"
 
     // 1. Filtrage exclusion résolution (ex: exclure 480p)
     const filteredRes = filterAndSortStreams(sampleStreams, { resolutions: "4k,1080p,720p" });
-    assert.equal(filteredRes.some(s => s._resolution === "480p"), false, "480p doit être exclu");
+    assert.equal(
+        filteredRes.some(s => s._resolution === "480p"),
+        false,
+        "480p doit être exclu"
+    );
 
     // 2. Réordonnancement : 1080p en premier
     const reordered = filterAndSortStreams(sampleStreams, { resolutions: "1080p,4k,720p,480p" });
@@ -712,7 +798,11 @@ test("Helpers - filterAndSortStreams filters by resolution, language and limits"
 
     // 3. Masquer les langues inconnues
     const noUnknown = filterAndSortStreams(sampleStreams, { hideUnknownLanguages: true });
-    assert.equal(noUnknown.some(s => s._lang === "unknown"), false, "Les langues inconnues doivent être filtrées");
+    assert.equal(
+        noUnknown.some(s => s._lang === "unknown"),
+        false,
+        "Les langues inconnues doivent être filtrées"
+    );
 
     // 4. Tri par taille décroissante
     const bySizeDesc = filterAndSortStreams(sampleStreams, { sortBy: "size" });
@@ -720,7 +810,11 @@ test("Helpers - filterAndSortStreams filters by resolution, language and limits"
 
     // 5. Limite de taille max (ex: max 10 Go -> exclut le 4k de 18 Go)
     const limitedSize = filterAndSortStreams(sampleStreams, { maxSizeGb: 10 });
-    assert.equal(limitedSize.some(s => s._size > 10 * 1024 * 1024 * 1024), false, "Les fichiers > 10 Go doivent être exclus");
+    assert.equal(
+        limitedSize.some(s => s._size > 10 * 1024 * 1024 * 1024),
+        false,
+        "Les fichiers > 10 Go doivent être exclus"
+    );
 
     // 6. Limite de nombre de flux (ex: max 2 flux)
     const limitedCount = filterAndSortStreams(sampleStreams, { maxStreams: 2 });
@@ -807,7 +901,9 @@ test("Server - Public status and Admin API endpoints", async () => {
         }
 
         // 5. POST /api/admin/login succès
-        const resLogin = await axios.post(`${base}/api/admin/login`, { password: process.env.ADMIN_PASSWORD || "admin123" });
+        const resLogin = await axios.post(`${base}/api/admin/login`, {
+            password: process.env.ADMIN_PASSWORD || "admin123"
+        });
         assert.equal(resLogin.status, 200);
         assert.ok(resLogin.data.success);
         assert.ok(resLogin.data.token);
@@ -851,7 +947,6 @@ test("Server - Public status and Admin API endpoints", async () => {
         assert.equal(resManifest.status, 200);
         assert.ok(resManifest.data.name.includes(uniquePseudo), "Le nom de l'addon doit inclure le pseudo");
         assert.ok(resManifest.data.description.includes("haute performance"), "Description officielle présente");
-
     } finally {
         server.close();
     }
@@ -880,7 +975,9 @@ test("Crowdsourcing & Prowlarr Modes - getSharedProwlarrInstances & URL validati
     createUser(localUuid, "hash", encLocal, "LocalUser", "local");
 
     const sharedInstances = getSharedProwlarrInstances();
-    const hasShared = sharedInstances.some(inst => inst.url === "https://prowlarr.shared.net" && inst.key === "key-shared");
+    const hasShared = sharedInstances.some(
+        inst => inst.url === "https://prowlarr.shared.net" && inst.key === "key-shared"
+    );
     const hasPrivate = sharedInstances.some(inst => inst.url === "https://prowlarr.private.net");
     const hasLocal = sharedInstances.some(inst => inst.userUuid === localUuid);
 
@@ -892,15 +989,28 @@ test("Crowdsourcing & Prowlarr Modes - getSharedProwlarrInstances & URL validati
 test("Catalogs - disableCatalogs hides catalogs from manifest and catalog route", async () => {
     // 1. Manifest sans catalogue quand disableCatalogs est actif
     const manifestDisabled = handleManifest({ disableCatalogs: true, pseudo: "NoCatalogs" });
-    assert.equal(manifestDisabled.catalogs.length, 0, "Les catalogues doivent être complètement vides dans le manifest");
-    assert.ok(!manifestDisabled.resources.includes("catalog"), "La ressource catalog ne doit pas être présente si désactivée");
+    assert.equal(
+        manifestDisabled.catalogs.length,
+        0,
+        "Les catalogues doivent être complètement vides dans le manifest"
+    );
+    assert.ok(
+        !manifestDisabled.resources.includes("catalog"),
+        "La ressource catalog ne doit pas être présente si désactivée"
+    );
 
     // 2. Manifest normal quand disableCatalogs est inactif ou par défaut (config vide)
     const manifestEnabled = handleManifest({ disableCatalogs: false, pseudo: "WithCatalogs" });
-    assert.ok(manifestEnabled.catalogs.length > 0, "Les catalogues doivent être présents quand disableCatalogs est false");
+    assert.ok(
+        manifestEnabled.catalogs.length > 0,
+        "Les catalogues doivent être présents quand disableCatalogs est false"
+    );
 
     const manifestDefault = handleManifest({});
-    assert.ok(manifestDefault.catalogs.length > 0, "Les catalogues doivent être activés par défaut avec une config vide");
+    assert.ok(
+        manifestDefault.catalogs.length > 0,
+        "Les catalogues doivent être activés par défaut avec une config vide"
+    );
     assert.ok(manifestDefault.resources.includes("catalog"), "La ressource catalog doit être déclarée par défaut");
     assert.ok(manifestDefault.resources.includes("meta"), "La ressource meta doit être déclarée par défaut");
 
@@ -910,9 +1020,18 @@ test("Catalogs - disableCatalogs hides catalogs from manifest and catalog route"
 
     // 4. Vérification du rendu HTML dans la page de configuration
     const html = renderConfigPage("register");
-    assert.ok(!html.includes('id="disableCatalogs" checked'), "L'option disableCatalogs ne doit pas être cochée par défaut dans l'interface");
-    assert.ok(html.includes('id="catalogsList">'), "Le conteneur catalogsList ne doit pas être masqué par style='display: none;'");
-    assert.ok(!html.includes('🚫 Désactiver tous les catalogues personnels (Recommandé)'), "La mention '(Recommandé)' doit être retirée");
+    assert.ok(
+        !html.includes('id="disableCatalogs" checked'),
+        "L'option disableCatalogs ne doit pas être cochée par défaut dans l'interface"
+    );
+    assert.ok(
+        html.includes('id="catalogsList">'),
+        "Le conteneur catalogsList ne doit pas être masqué par style='display: none;'"
+    );
+    assert.ok(
+        !html.includes("🚫 Désactiver tous les catalogues personnels (Recommandé)"),
+        "La mention '(Recommandé)' doit être retirée"
+    );
 });
 
 test("Stream Filtering - default 150GB limit and sorting", () => {
@@ -1023,7 +1142,10 @@ test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagn
     // 2. Diagnostic d'hôte introuvable
     const notFoundRes = await checkProwlarrConnectivity("http://prowlarr-inexistant-test:9696", "test_key");
     assert.equal(notFoundRes.success, false);
-    assert.ok(notFoundRes.error.includes("Hôte 'prowlarr-inexistant-test' introuvable"), "Doit diagnostiquer l'hôte introuvable");
+    assert.ok(
+        notFoundRes.error.includes("Hôte 'prowlarr-inexistant-test' introuvable"),
+        "Doit diagnostiquer l'hôte introuvable"
+    );
     assert.ok(notFoundRes.error.includes("host.docker.internal"), "Doit suggérer host.docker.internal");
 
     // 3. Mock HTTP server pour simuler Prowlarr
@@ -1076,7 +1198,10 @@ test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagn
         // Test 3d : Détection d'URL Lumio saisie dans Prowlarr
         const lumioCheck = await checkProwlarrConnectivity("https://mylumio.tv/manifest.json", "some_key");
         assert.equal(lumioCheck.success, false);
-        assert.ok(lumioCheck.error.includes("Lumio et Prowlarr sont deux services distincts"), "Doit détecter la confusion d'URL Lumio");
+        assert.ok(
+            lumioCheck.error.includes("Lumio et Prowlarr sont deux services distincts"),
+            "Doit détecter la confusion d'URL Lumio"
+        );
 
         // Test 3e : Simulation d'erreur Cloudflare 1033 (HTTP 530)
         mode = "cf1033";
@@ -1194,11 +1319,7 @@ test("Helpers - formatAioStream supports precache, global and lumio badges", () 
 });
 
 test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async () => {
-    const {
-        checkTorboxKey,
-        getTorboxStreamUrl,
-        TORBOX_API_BASE
-    } = require("../lib/torbox");
+    const { checkTorboxKey, getTorboxStreamUrl, TORBOX_API_BASE } = require("../lib/torbox");
 
     // 1. Validation de clé invalide sans appel réseau
     const emptyKeyRes = await checkTorboxKey("");
@@ -1206,7 +1327,10 @@ test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async 
 
     // 2. Génération de permalink CDN redirect=true
     const streamUrl = await getTorboxStreamUrl(1234, 5, "my_test_torbox_key", true);
-    assert.equal(streamUrl, `${TORBOX_API_BASE}/torrents/requestdl?token=my_test_torbox_key&torrent_id=1234&file_id=5&redirect=true`);
+    assert.equal(
+        streamUrl,
+        `${TORBOX_API_BASE}/torrents/requestdl?token=my_test_torbox_key&torrent_id=1234&file_id=5&redirect=true`
+    );
 });
 
 test("Torbox - Helpers formatAioStream formats streams with [TB] badges and Torbox labels", () => {
@@ -1256,7 +1380,7 @@ test("Torbox - checkInstantTorbox parses object and list mock responses", async 
         const hash2 = "2222222222222222222222222222222222222222";
 
         // Mock format object
-        torboxApi.get = async function(url, config) {
+        torboxApi.get = async function (url, config) {
             if (url && url.includes("/torrents/checkcached")) {
                 return {
                     status: 200,
@@ -1277,15 +1401,13 @@ test("Torbox - checkInstantTorbox parses object and list mock responses", async 
         assert.equal(resultObj[hash2], undefined);
 
         // Mock format list
-        torboxApi.get = async function(url, config) {
+        torboxApi.get = async function (url, config) {
             if (url && url.includes("/torrents/checkcached")) {
                 return {
                     status: 200,
                     data: {
                         success: true,
-                        data: [
-                            { hash: hash1, name: "Film 1" }
-                        ]
+                        data: [{ hash: hash1, name: "Film 1" }]
                     }
                 };
             }
@@ -1307,7 +1429,12 @@ test("Torbox - unlockTorboxFileTarget resolves tb_cloud and handles direct URLs"
     assert.equal(direct, "https://storage.torbox.app/cdn/video.mp4");
 
     const cloudRef = await unlockTorboxFileTarget("key123", "tb_cloud:456:78");
-    assert.ok(cloudRef && cloudRef.includes("torrent_id=456") && cloudRef.includes("file_id=78") && cloudRef.includes("token=key123"));
+    assert.ok(
+        cloudRef &&
+            cloudRef.includes("torrent_id=456") &&
+            cloudRef.includes("file_id=78") &&
+            cloudRef.includes("token=key123")
+    );
 });
 
 test("Lumio - handleStream queries Lumio on-demand and filters out error cards", async () => {
@@ -1317,7 +1444,7 @@ test("Lumio - handleStream queries Lumio on-demand and filters out error cards",
 
     try {
         let interceptedEndpoint = null;
-        axios.get = async function(url, config) {
+        axios.get = async function (url, config) {
             if (url && url.includes("/stream/movie/tt1234567.json")) {
                 interceptedEndpoint = url;
                 return {
@@ -1333,7 +1460,8 @@ test("Lumio - handleStream queries Lumio on-demand and filters out error cards",
                             // 2. Flux valide AllDebrid
                             {
                                 name: "[AD⚡️] Lumio",
-                                description: "1080p • BluRay • 💾 15,2 Go • 🔎 C411 | DMM\n🎧 HEVC • AC3 5.1\n🗂️ Test.Film.2024.1080p.mkv",
+                                description:
+                                    "1080p • BluRay • 💾 15,2 Go • 🔎 C411 | DMM\n🎧 HEVC • AC3 5.1\n🗂️ Test.Film.2024.1080p.mkv",
                                 url: "https://mylumio.tv/play/valid123",
                                 behaviorHints: {
                                     filename: "Test.Film.2024.1080p.mkv",
@@ -1364,9 +1492,20 @@ test("Lumio - handleStream queries Lumio on-demand and filters out error cards",
             prowlarrKey: "off"
         };
 
-        const result = await handleStream(config, "movie", "tt1234567", { movies: {}, series: {} }, "http://localhost:3000", "test-user");
+        const result = await handleStream(
+            config,
+            "movie",
+            "tt1234567",
+            { movies: {}, series: {} },
+            "http://localhost:3000",
+            "test-user"
+        );
 
-        assert.ok(interceptedEndpoint && interceptedEndpoint.includes("https://mylumio.tv/test_token/stream/movie/tt1234567.json"), "Endpoint Lumio doit être appelé à la demande");
+        assert.ok(
+            interceptedEndpoint &&
+                interceptedEndpoint.includes("https://mylumio.tv/test_token/stream/movie/tt1234567.json"),
+            "Endpoint Lumio doit être appelé à la demande"
+        );
         assert.ok(result && Array.isArray(result.streams), "Doit renvoyer un tableau de flux");
 
         // Vérifier que la carte d'erreur '🔴 Lumio' a été éliminée
@@ -1426,7 +1565,10 @@ test("Helpers - formatAioStream source and status lines structure", () => {
     assert.ok(cloudStream.name.startsWith("[AD ⚡ Cloud]"), "Badge gauche Cloud");
     assert.ok(cloudStream.title.includes("☁️ Cloud personnel"), "Ligne de source Cloud personnel");
     assert.ok(cloudStream.title.includes("⚡ Lecture immédiate"), "Ligne de statut Lecture immédiate");
-    assert.ok(!cloudStream.title.includes("Cloud personnel\n⚡ Cloud personnel"), "Ne doit pas doubler Cloud personnel");
+    assert.ok(
+        !cloudStream.title.includes("Cloud personnel\n⚡ Cloud personnel"),
+        "Ne doit pas doubler Cloud personnel"
+    );
 
     // 4. Flux en cours de téléchargement (non instantané)
     const dlAdStream = formatAioStream({
@@ -1452,20 +1594,26 @@ test("UI - Stepper naming, hidden login error, TMDB guidance, and Lumio links", 
     const htmlConfig = renderConfigPage("register");
     // #cfgLoginError doit avoir style="display: none;"
     assert.ok(htmlConfig.includes('id="cfgLoginError"'), "Doit contenir le conteneur d'erreur login");
-    assert.ok(htmlConfig.includes('display: none'), "L'erreur de login doit être masquée par défaut");
+    assert.ok(htmlConfig.includes("display: none"), "L'erreur de login doit être masquée par défaut");
 
     // Stepper étape 4 doit s'appeler "Qualité & Cache"
     assert.ok(htmlConfig.includes("Qualité & Cache"), "L'étape 4 du stepper doit être nommée 'Qualité & Cache'");
 
     // TMDB indication optionnelle et lien Cinemeta
     assert.ok(htmlConfig.includes("Cinemeta"), "Doit mentionner Cinemeta comme fallback");
-    assert.ok(htmlConfig.includes("Optionnelle") || htmlConfig.includes("optionnel"), "Doit indiquer que TMDB est optionnel");
+    assert.ok(
+        htmlConfig.includes("Optionnelle") || htmlConfig.includes("optionnel"),
+        "Doit indiquer que TMDB est optionnel"
+    );
 
     // Lien cliquable vers https://mylumio.tv
     assert.ok(htmlConfig.includes('href="https://mylumio.tv"'), "Doit inclure un lien cliquable vers mylumio.tv");
 
     // Prowlarr libellé externe ou interne
-    assert.ok(htmlConfig.includes("Optionnel - Instance externe ou interne"), "Doit afficher le libellé Prowlarr explicite");
+    assert.ok(
+        htmlConfig.includes("Optionnel - Instance externe ou interne"),
+        "Doit afficher le libellé Prowlarr explicite"
+    );
 
     // Admin UI
     const htmlAdmin = renderAdminPage();
@@ -1473,7 +1621,10 @@ test("UI - Stepper naming, hidden login error, TMDB guidance, and Lumio links", 
     assert.ok(htmlAdmin.includes("/api/admin/health/debrid"), "L'interface Admin doit avoir la sonde de santé");
     assert.ok(htmlAdmin.includes("/api/admin/backup"), "L'interface Admin doit inclure le téléchargement de backup");
     assert.ok(htmlAdmin.includes("/api/admin/maintenance/vacuum"), "L'interface Admin doit inclure le vacuum");
-    assert.ok(htmlAdmin.includes("/api/admin/maintenance/purge-expired"), "L'interface Admin doit inclure la purge expirée");
+    assert.ok(
+        htmlAdmin.includes("/api/admin/maintenance/purge-expired"),
+        "L'interface Admin doit inclure la purge expirée"
+    );
     assert.ok(htmlAdmin.includes("/api/admin/logout"), "L'interface Admin doit supporter la déconnexion");
 });
 
@@ -1516,9 +1667,21 @@ test("User API - Update retains existing API keys when inputs are left empty", a
             password: "updatePassword123"
         });
         assert.equal(loginRes.status, 200);
-        assert.equal(loginRes.data.config.apiKey, "original_alldebrid_key_abc123", "La clé AllDebrid ne doit pas être écrasée par une chaîne vide");
-        assert.equal(loginRes.data.config.torboxApiKey, "original_torbox_key_xyz789", "La clé Torbox ne doit pas être écrasée par une chaîne vide");
-        assert.equal(loginRes.data.config.prowlarrKey, "original_prowlarr_key_456", "La clé Prowlarr ne doit pas être écrasée par une chaîne vide");
+        assert.equal(
+            loginRes.data.config.apiKey,
+            "original_alldebrid_key_abc123",
+            "La clé AllDebrid ne doit pas être écrasée par une chaîne vide"
+        );
+        assert.equal(
+            loginRes.data.config.torboxApiKey,
+            "original_torbox_key_xyz789",
+            "La clé Torbox ne doit pas être écrasée par une chaîne vide"
+        );
+        assert.equal(
+            loginRes.data.config.prowlarrKey,
+            "original_prowlarr_key_456",
+            "La clé Prowlarr ne doit pas être écrasée par une chaîne vide"
+        );
         assert.equal(loginRes.data.config.resolutions, "1080p", "Les réglages modifiés doivent bien être mis à jour");
 
         // 4. Nettoyage
@@ -1572,24 +1735,36 @@ test("Admin API - Security, Maintenance, Backup, and Health Probe endpoints", as
             assert.equal(err.response?.status, 401);
         }
         // 3b. Avec token -> 200
-        const purgeRes = await axios.post(`${base}/api/admin/maintenance/purge-expired`, {}, {
-            headers: { "x-admin-token": token }
-        });
+        const purgeRes = await axios.post(
+            `${base}/api/admin/maintenance/purge-expired`,
+            {},
+            {
+                headers: { "x-admin-token": token }
+            }
+        );
         assert.equal(purgeRes.status, 200);
         assert.equal(purgeRes.data.success, true);
         assert.ok(typeof purgeRes.data.purged === "number");
 
         // 4. Maintenance - Vacuum / optimize
-        const vacuumRes = await axios.post(`${base}/api/admin/maintenance/vacuum`, {}, {
-            headers: { "x-admin-token": token }
-        });
+        const vacuumRes = await axios.post(
+            `${base}/api/admin/maintenance/vacuum`,
+            {},
+            {
+                headers: { "x-admin-token": token }
+            }
+        );
         assert.equal(vacuumRes.status, 200);
         assert.equal(vacuumRes.data.success, true);
 
         // 5. Maintenance - Prowlarr sync
-        const syncRes = await axios.post(`${base}/api/admin/prowlarr/sync`, {}, {
-            headers: { "x-admin-token": token }
-        });
+        const syncRes = await axios.post(
+            `${base}/api/admin/prowlarr/sync`,
+            {},
+            {
+                headers: { "x-admin-token": token }
+            }
+        );
         assert.equal(syncRes.status, 200);
         assert.equal(typeof syncRes.data.success, "boolean");
 
@@ -1625,9 +1800,13 @@ test("Admin API - Security, Maintenance, Backup, and Health Probe endpoints", as
         }
 
         // 9. Révocation de token via logout
-        const logoutRes = await axios.post(`${base}/api/admin/logout`, {}, {
-            headers: { "x-admin-token": token }
-        });
+        const logoutRes = await axios.post(
+            `${base}/api/admin/logout`,
+            {},
+            {
+                headers: { "x-admin-token": token }
+            }
+        );
         assert.equal(logoutRes.status, 200);
         assert.equal(logoutRes.data.success, true);
 
@@ -1749,11 +1928,7 @@ test("AnimeParser - Normalisation des titres et gestion du Romaji / plein chasse
 
 test("AnimeParser - Fuzzy matching de titres avec string-similarity et alias", () => {
     // 1. Match exact via alias officiel
-    const match1 = isAnimeTitleMatch(
-        "Shingeki no Kyojin",
-        "Attack on Titan",
-        ["Shingeki no Kyojin", "AoT"]
-    );
+    const match1 = isAnimeTitleMatch("Shingeki no Kyojin", "Attack on Titan", ["Shingeki no Kyojin", "AoT"]);
     assert.equal(match1.isMatch, true);
     assert.equal(match1.similarity, 1.0);
 
@@ -1768,12 +1943,7 @@ test("AnimeParser - Fuzzy matching de titres avec string-similarity et alias", (
     assert.ok(match2.similarity >= 0.82);
 
     // 3. Rejet d'un anime complètement différent
-    const matchMismatch = isAnimeTitleMatch(
-        "Naruto Shippuden",
-        "Attack on Titan",
-        ["Shingeki no Kyojin"],
-        0.82
-    );
+    const matchMismatch = isAnimeTitleMatch("Naruto Shippuden", "Attack on Titan", ["Shingeki no Kyojin"], 0.82);
     assert.equal(matchMismatch.isMatch, false);
 });
 
@@ -1896,7 +2066,11 @@ test("Helpers - hasNonLatinCharacters detects Arabic, Cyrillic, CJK and preserve
     assert.ok(hasNonLatinCharacters("Брат"), "Cyrillique doit être détecté");
     assert.ok(hasNonLatinCharacters("鬼滅の刃"), "CJK doit être détecté");
     assert.ok(hasNonLatinCharacters("שָׁלוֹם"), "Hébreu doit être détecté");
-    assert.equal(hasNonLatinCharacters("Le Fabuleux Destin d'Amélie Poulain"), false, "Français avec accents reste latin");
+    assert.equal(
+        hasNonLatinCharacters("Le Fabuleux Destin d'Amélie Poulain"),
+        false,
+        "Français avec accents reste latin"
+    );
     assert.equal(hasNonLatinCharacters("Inception"), false, "Anglais reste latin");
     assert.equal(hasNonLatinCharacters("No Exit"), false, "Titre latin");
 });
@@ -1956,7 +2130,10 @@ test("Helpers - getFrenchTitle resolves French title and caches in memory", asyn
     // 1. tt2096673 -> "Vice-Versa" (Inside Out) ou fallback si Wikidata indisponible
     const frTitle = await getFrenchTitle("tt2096673", "Inside Out");
     assert.ok(frTitle, "Doit renvoyer un titre");
-    assert.ok(frTitle === "Vice-Versa" || frTitle === "Inside Out", `Doit retourner Vice-Versa ou Inside Out (reçu: ${frTitle})`);
+    assert.ok(
+        frTitle === "Vice-Versa" || frTitle === "Inside Out",
+        `Doit retourner Vice-Versa ou Inside Out (reçu: ${frTitle})`
+    );
 
     // 2. Vérification du cache mémoire immédiat
     const cached = await getFrenchTitle("tt2096673", "Inside Out Fallback");
@@ -1987,7 +2164,7 @@ test("Debrid Provider Both - handleStream produces both AllDebrid and Torbox str
 
     const { torboxApi } = require("../lib/torbox");
     const originalTorboxGet = torboxApi.get;
-    torboxApi.get = async (url) => {
+    torboxApi.get = async url => {
         if (url && url.includes("/torrents/checkcached")) {
             return {
                 data: {
@@ -2009,7 +2186,14 @@ test("Debrid Provider Both - handleStream produces both AllDebrid and Torbox str
             prowlarrKey: "off"
         };
 
-        const result = await handleStream(config, "movie", testImdb, { movies: {}, series: {} }, "http://localhost:3000", "test-user-both");
+        const result = await handleStream(
+            config,
+            "movie",
+            testImdb,
+            { movies: {}, series: {} },
+            "http://localhost:3000",
+            "test-user-both"
+        );
         assert.ok(result && Array.isArray(result.streams));
 
         // En mode "both", doit contenir un flux AllDebrid ET un flux Torbox pour le même torrent précaché
@@ -2052,10 +2236,19 @@ test("Debrid Provider Both - handleResolve routes tb_ target to Torbox and hash_
             }
         };
         const resTb = {
-            status(code) { statusCode = code; return this; },
-            json() { return this; },
-            send() { return this; },
-            redirect(code) { statusCode = code; }
+            status(code) {
+                statusCode = code;
+                return this;
+            },
+            json() {
+                return this;
+            },
+            send() {
+                return this;
+            },
+            redirect(code) {
+                statusCode = code;
+            }
         };
 
         await handleResolve(reqTb, resTb);
@@ -2070,10 +2263,19 @@ test("Debrid Provider Both - handleResolve routes tb_ target to Torbox and hash_
             }
         };
         const resAd = {
-            status(code) { statusCode = code; return this; },
-            json() { return this; },
-            send() { return this; },
-            redirect(code) { statusCode = code; }
+            status(code) {
+                statusCode = code;
+                return this;
+            },
+            json() {
+                return this;
+            },
+            send() {
+                return this;
+            },
+            redirect(code) {
+                statusCode = code;
+            }
         };
 
         await handleResolve(reqAd, resAd);
@@ -2159,7 +2361,11 @@ test("Helpers & Cloud - formatAioStream handles Exit 8 WEB release with proper q
     // 5. Source et Statut sans doublon
     assert.ok(formatted.title.includes("☁️ Cloud personnel"), "Ligne de provenance Cloud personnel");
     assert.ok(formatted.title.includes("⚡ Lecture immédiate"), "Ligne de statut Lecture immédiate");
-    assert.equal(formatted.title.includes("Cloud personnel\n⚡ Cloud personnel"), false, "Aucun doublon 'Cloud personnel'");
+    assert.equal(
+        formatted.title.includes("Cloud personnel\n⚡ Cloud personnel"),
+        false,
+        "Aucun doublon 'Cloud personnel'"
+    );
 
     // 6. Test avec Torbox
     const formattedTb = formatAioStream({
@@ -2238,7 +2444,7 @@ test("Catalogs - handleCatalog accurately routes anime episodes to series and mo
 
     const alldebrid = require("../lib/alldebrid");
     const originalAdGet = alldebrid.adGet;
-    alldebrid.adGet = async (endpoint) => {
+    alldebrid.adGet = async endpoint => {
         if (endpoint === "/v4/user/history" || endpoint === "/v4/user/links") {
             return {
                 data: {
@@ -2308,7 +2514,9 @@ test("TMDB <-> IMDb Bridge - in-memory LRU caching eliminates redundant HTTP cal
             if (url.includes("/find/")) {
                 return {
                     data: {
-                        tv_results: [{ name: "Fresh Test Show", original_name: "Fresh Test Show", first_air_date: "2024-01-01" }],
+                        tv_results: [
+                            { name: "Fresh Test Show", original_name: "Fresh Test Show", first_air_date: "2024-01-01" }
+                        ],
                         movie_results: []
                     }
                 };
@@ -2363,7 +2571,7 @@ test("Catalogs - Infinite scroll pagination by exactly 50 items and alias suppor
 
     const alldebrid = require("../lib/alldebrid");
     const originalAdGet = alldebrid.adGet;
-    alldebrid.adGet = async (endpoint) => {
+    alldebrid.adGet = async endpoint => {
         if (endpoint.includes("/magnet/status")) {
             return {
                 data: {
@@ -2428,7 +2636,14 @@ test("Playback - History and Links direct unlock for series and movies", async (
     mockCache.movies["tt9999999"] = [
         { link: "https://alldebrid.com/dl/movie_direct.mkv", filename: "Movie Direct 1080p.mkv" }
     ];
-    const movieStreams = await handleStream(mockConfig, "movie", "tt9999999", mockCache, "http://localhost:3000", "test-user");
+    const movieStreams = await handleStream(
+        mockConfig,
+        "movie",
+        "tt9999999",
+        mockCache,
+        "http://localhost:3000",
+        "test-user"
+    );
     assert.ok(movieStreams.streams.some(s => s.title.includes("Movie Direct")));
 });
 
@@ -2455,9 +2670,7 @@ test("AllDebrid - checkInstantMagnets is read-only and never uploads magnets to 
                 data: {
                     status: "success",
                     data: {
-                        magnets: [
-                            { hash: "1122334455667788990011223344556677889900", instant: true }
-                        ]
+                        magnets: [{ hash: "1122334455667788990011223344556677889900", instant: true }]
                     }
                 }
             };
@@ -2467,8 +2680,16 @@ test("AllDebrid - checkInstantMagnets is read-only and never uploads magnets to 
 
     try {
         const res = await checkInstantMagnets(["1122334455667788990011223344556677889900"], "test_ad_key");
-        assert.equal(uploadCalled, false, "checkInstantMagnets ne doit JAMAIS appeler upload (ce qui polluerait le compte)");
-        assert.equal(instantCalled, true, "checkInstantMagnets doit interroger l'endpoint en lecture seule /v4/magnet/instant");
+        assert.equal(
+            uploadCalled,
+            false,
+            "checkInstantMagnets ne doit JAMAIS appeler upload (ce qui polluerait le compte)"
+        );
+        assert.equal(
+            instantCalled,
+            true,
+            "checkInstantMagnets doit interroger l'endpoint en lecture seule /v4/magnet/instant"
+        );
         assert.equal(res["1122334455667788990011223344556677889900"], true);
     } finally {
         alldebrid.adPost = originalPost;
@@ -2492,7 +2713,7 @@ test("Catalogs - my_ad_history_series with real SQLite loadCache never throws un
     const originalAdGet = alldebrid.adGet;
     const originalAxiosGet = axios.get;
 
-    alldebrid.adGet = async (endpoint) => {
+    alldebrid.adGet = async endpoint => {
         if (endpoint === "/v4/user/history") {
             return {
                 data: {
@@ -2547,7 +2768,11 @@ test("Catalogs - my_ad_history_series with real SQLite loadCache never throws un
         // 2. Fetch again to verify idempotency (no duplicate episodes)
         const res2 = await handleCatalog(mockConfig, "series", "my_ad_history_series", realCache);
         assert.ok(Array.isArray(res2.metas));
-        assert.equal(realCache.series["tt0903747"].episodes.length, 2, "Episodes must not be duplicated on repeated catalog load");
+        assert.equal(
+            realCache.series["tt0903747"].episodes.length,
+            2,
+            "Episodes must not be duplicated on repeated catalog load"
+        );
 
         // 3. Verify persistence across fresh cache proxy reload from SQLite
         const freshCache = loadCache();
@@ -2579,7 +2804,7 @@ test("Catalogs - my_ad_history_series supports official data.history structure a
 
     let historyPayloadType = "history"; // "history" or "array"
 
-    alldebrid.adGet = async (endpoint) => {
+    alldebrid.adGet = async endpoint => {
         if (endpoint === "/v4/user/history") {
             if (historyPayloadType === "history") {
                 return {
@@ -2587,9 +2812,15 @@ test("Catalogs - my_ad_history_series supports official data.history structure a
                         status: "success",
                         data: {
                             history: [
-                                { name: "Severance.S01E01.Good.News.About.Hell.1080p.mkv", link: "https://ad.link/sev1" },
+                                {
+                                    name: "Severance.S01E01.Good.News.About.Hell.1080p.mkv",
+                                    link: "https://ad.link/sev1"
+                                },
                                 { name: "Severance.S01E02.Half.Loop.1080p.mkv", link: "https://ad.link/sev2" },
-                                { name: "MwQjLhkCEY5CYdjw-RJcfBmOulb3i7H7ZurPDy20eGo", link: "https://ad.link/bad_token" }, // Token obfusqué
+                                {
+                                    name: "MwQjLhkCEY5CYdjw-RJcfBmOulb3i7H7ZurPDy20eGo",
+                                    link: "https://ad.link/bad_token"
+                                }, // Token obfusqué
                                 null, // Corrupt entry
                                 { filesize: 12345 } // Entry with no filename/name
                             ]
@@ -2600,9 +2831,7 @@ test("Catalogs - my_ad_history_series supports official data.history structure a
                 return {
                     data: {
                         status: "success",
-                        data: [
-                            { filename: "Severance.S01E03.In.Perpetuity.1080p.mkv", link: "https://ad.link/sev3" }
-                        ]
+                        data: [{ filename: "Severance.S01E03.In.Perpetuity.1080p.mkv", link: "https://ad.link/sev3" }]
                     }
                 };
             }
@@ -2656,60 +2885,30 @@ test("Helpers - cleanUrlAndDomainPrefix universally cleans domains, trackers and
         cleanUrlAndDomainPrefix("https://tracker.lat/files/Jujutsu.Kaisen.S01E01.mkv"),
         "Jujutsu.Kaisen.S01E01.mkv"
     );
-    assert.equal(
-        cleanUrlAndDomainPrefix("http://download.moe/dl?file=Wall-E.2008.1080p.mkv"),
-        "Wall-E.2008.1080p.mkv"
-    );
+    assert.equal(cleanUrlAndDomainPrefix("http://download.moe/dl?file=Wall-E.2008.1080p.mkv"), "Wall-E.2008.1080p.mkv");
 
     // 2. Bracket tracker/domain removal
     assert.equal(
         cleanUrlAndDomainPrefix("[ www.Torrent9.site ] Jujutsu.Kaisen.S01E01.mkv"),
         "Jujutsu.Kaisen.S01E01.mkv"
     );
-    assert.equal(
-        cleanUrlAndDomainPrefix("[GkTorrent.com] Mr. Robot S01E01.mkv"),
-        "Mr. Robot S01E01.mkv"
-    );
+    assert.equal(cleanUrlAndDomainPrefix("[GkTorrent.com] Mr. Robot S01E01.mkv"), "Mr. Robot S01E01.mkv");
     assert.equal(
         cleanUrlAndDomainPrefix("(zone-telechargement.com) S.W.A.T.2017.S01E01.mkv"),
         "S.W.A.T.2017.S01E01.mkv"
     );
 
     // 3. Domain prefixes with modern TLDs (.lat, .moe, .site, .sh, .plus, .fi, etc.)
-    assert.equal(
-        cleanUrlAndDomainPrefix("wawacity.moe - Jujutsu Kaisen S01"),
-        "Jujutsu Kaisen S01"
-    );
-    assert.equal(
-        cleanUrlAndDomainPrefix("cpasbien.plus_Mr. Robot S01E01.mkv"),
-        "Mr. Robot S01E01.mkv"
-    );
-    assert.equal(
-        cleanUrlAndDomainPrefix("extreme-down.lat.Wall-E.2008.mkv"),
-        "Wall-E.2008.mkv"
-    );
-    assert.equal(
-        cleanUrlAndDomainPrefix("yggtorrent.fi: S.W.A.T.2017.mkv"),
-        "S.W.A.T.2017.mkv"
-    );
-    assert.equal(
-        cleanUrlAndDomainPrefix("zone-telechargement.sh - Inception.2010.mkv"),
-        "Inception.2010.mkv"
-    );
+    assert.equal(cleanUrlAndDomainPrefix("wawacity.moe - Jujutsu Kaisen S01"), "Jujutsu Kaisen S01");
+    assert.equal(cleanUrlAndDomainPrefix("cpasbien.plus_Mr. Robot S01E01.mkv"), "Mr. Robot S01E01.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("extreme-down.lat.Wall-E.2008.mkv"), "Wall-E.2008.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("yggtorrent.fi: S.W.A.T.2017.mkv"), "S.W.A.T.2017.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("zone-telechargement.sh - Inception.2010.mkv"), "Inception.2010.mkv");
 
     // 4. Warez names without TLD
-    assert.equal(
-        cleanUrlAndDomainPrefix("zone-telechargement_Wall-E.2008.mkv"),
-        "Wall-E.2008.mkv"
-    );
-    assert.equal(
-        cleanUrlAndDomainPrefix("wawacity-Mr. Robot S01E01.mkv"),
-        "Mr. Robot S01E01.mkv"
-    );
-    assert.equal(
-        cleanUrlAndDomainPrefix("cpasbien.S.W.A.T.2017.mkv"),
-        "S.W.A.T.2017.mkv"
-    );
+    assert.equal(cleanUrlAndDomainPrefix("zone-telechargement_Wall-E.2008.mkv"), "Wall-E.2008.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("wawacity-Mr. Robot S01E01.mkv"), "Mr. Robot S01E01.mkv");
+    assert.equal(cleanUrlAndDomainPrefix("cpasbien.S.W.A.T.2017.mkv"), "S.W.A.T.2017.mkv");
 
     // 5. Preserves legitimate titles & non-tracker tags
     assert.equal(cleanUrlAndDomainPrefix("Mr. Robot"), "Mr. Robot");
@@ -2859,7 +3058,7 @@ test("Catalogs & AllDebrid - Season pack expands internal video files individual
     const mockConfig = { apiKey: "fake_ad_key", tmdbKey: "default", debridProvider: "alldebrid" };
     const fakeCache = { series: {}, classification: {} };
 
-    alldebrid.adGet = async (endpoint) => {
+    alldebrid.adGet = async endpoint => {
         if (endpoint === "/v4.1/magnet/status") {
             return {
                 data: {
@@ -2881,7 +3080,7 @@ test("Catalogs & AllDebrid - Season pack expands internal video files individual
         return { data: { status: "success", data: {} } };
     };
 
-    alldebrid.getMagnetFiles = async (ids) => {
+    alldebrid.getMagnetFiles = async ids => {
         return {
             555: [
                 { n: "Jujutsu.Kaisen.S01E01.1080p.mkv", s: 1000000000, l: "https://ad.com/dl/e01" },
@@ -2920,7 +3119,7 @@ test("API Routes - POST /api/user/cleanup-magnets and POST /api/admin/cleanup-ma
     const originalCleanup = alldebrid.cleanupPendingMagnets;
 
     let cleanupCalledWithKey = null;
-    alldebrid.cleanupPendingMagnets = async (key) => {
+    alldebrid.cleanupPendingMagnets = async key => {
         cleanupCalledWithKey = key;
         return { success: true, deletedCount: 3, message: "3 magnets purgés" };
     };
@@ -2950,7 +3149,10 @@ test("API Routes - POST /api/user/cleanup-magnets and POST /api/admin/cleanup-ma
         }
 
         // 2. User cleanup - valid auth
-        const userRes = await axios.post(`${base}/api/user/cleanup-magnets`, { uuid: testUuid, password: testPassword });
+        const userRes = await axios.post(`${base}/api/user/cleanup-magnets`, {
+            uuid: testUuid,
+            password: testPassword
+        });
         assert.equal(userRes.status, 200);
         assert.equal(userRes.data.success, true);
         assert.equal(userRes.data.deletedCount, 3);
@@ -2965,11 +3167,17 @@ test("API Routes - POST /api/user/cleanup-magnets and POST /api/admin/cleanup-ma
         }
 
         // 4. Admin login & cleanup
-        const loginRes = await axios.post(`${base}/api/admin/login`, { password: process.env.ADMIN_PASSWORD || "admin123" });
-        const adminToken = loginRes.data.token;
-        const adminRes = await axios.post(`${base}/api/admin/cleanup-magnets`, { apiKey: "admin_override_key" }, {
-            headers: { "x-admin-token": adminToken }
+        const loginRes = await axios.post(`${base}/api/admin/login`, {
+            password: process.env.ADMIN_PASSWORD || "admin123"
         });
+        const adminToken = loginRes.data.token;
+        const adminRes = await axios.post(
+            `${base}/api/admin/cleanup-magnets`,
+            { apiKey: "admin_override_key" },
+            {
+                headers: { "x-admin-token": adminToken }
+            }
+        );
         assert.equal(adminRes.status, 200);
         assert.equal(adminRes.data.success, true);
         assert.equal(cleanupCalledWithKey, "admin_override_key");
@@ -2985,7 +3193,12 @@ test("API Routes - POST /api/user/cleanup-magnets and POST /api/admin/cleanup-ma
 });
 
 test("Prowlarr Categories - Expanded categories cover Cardigann/Torznab standard for Movies, TV, Anime, and RSS sync", async () => {
-    const { PROWLARR_CATEGORIES, formatCategoryParams, searchProwlarrOnDemand, syncProwlarrReleases } = require("../lib/prowlarr-worker");
+    const {
+        PROWLARR_CATEGORIES,
+        formatCategoryParams,
+        searchProwlarrOnDemand,
+        syncProwlarrReleases
+    } = require("../lib/prowlarr-worker");
     const axios = require("axios");
 
     // 1. Structure des catégories conformes au standard Cardigann / Torznab
@@ -3006,7 +3219,10 @@ test("Prowlarr Categories - Expanded categories cover Cardigann/Torznab standard
     assert.ok(PROWLARR_CATEGORIES.ANIME.includes(5070), "Anime doit inclure 5070");
     assert.ok(PROWLARR_CATEGORIES.ANIME.includes(100000), "Anime doit inclure 100000 Custom");
 
-    assert.ok(PROWLARR_CATEGORIES.ALL_VIDEO.length >= 20, "Toutes les catégories vidéo doivent couvrir au moins 20 IDs");
+    assert.ok(
+        PROWLARR_CATEGORIES.ALL_VIDEO.length >= 20,
+        "Toutes les catégories vidéo doivent couvrir au moins 20 IDs"
+    );
 
     // 2. Formatage des paramètres URL
     const formatted = formatCategoryParams([2000, 2040, 5070]);
@@ -3015,7 +3231,7 @@ test("Prowlarr Categories - Expanded categories cover Cardigann/Torznab standard
     // 3. Test des appels on-demand pour Film vs Série vs Anime
     const originalGet = axios.get;
     let lastUrl = null;
-    axios.get = async (url) => {
+    axios.get = async url => {
         lastUrl = url;
         return { data: [] };
     };
@@ -3077,12 +3293,32 @@ test("Lioness, Long Titles, Anime Romaji, and Prowlarr Hash Extraction", async (
     const { handleCatalog } = require("../lib/stremio");
 
     // 1. Lioness vs Indian Special OPS mapping
-    assert.strictEqual(isConfidentTitleMatch("Special Ops Lioness", "Lioness"), true, "Special Ops Lioness doit matcher Lioness");
-    assert.strictEqual(isConfidentTitleMatch("Special Ops Lioness", "Special OPS"), false, "Special Ops Lioness ne doit JAMAIS matcher Special OPS seul");
-    assert.strictEqual(isConfidentTitleMatch("Lionnes", "Special Ops Lioness"), true, "Recherche 'Lionnes' doit matcher 'Special Ops Lioness'");
+    assert.strictEqual(
+        isConfidentTitleMatch("Special Ops Lioness", "Lioness"),
+        true,
+        "Special Ops Lioness doit matcher Lioness"
+    );
+    assert.strictEqual(
+        isConfidentTitleMatch("Special Ops Lioness", "Special OPS"),
+        false,
+        "Special Ops Lioness ne doit JAMAIS matcher Special OPS seul"
+    );
+    assert.strictEqual(
+        isConfidentTitleMatch("Lionnes", "Special Ops Lioness"),
+        true,
+        "Recherche 'Lionnes' doit matcher 'Special Ops Lioness'"
+    );
     assert.strictEqual(isConfidentTitleMatch("Lionnes", "Lioness"), true, "Recherche 'Lionnes' doit matcher 'Lioness'");
-    assert.strictEqual(isConfidentTitleMatch("Lionnes", "Operations Speciales"), false, "Recherche 'Lionnes' ne doit pas matcher 'Operations Speciales' seul");
-    assert.strictEqual(isConfidentTitleMatch("Special Ops Lioness", "Opérations Spéciales : Lioness"), true, "Titre US doit matcher titre FR");
+    assert.strictEqual(
+        isConfidentTitleMatch("Lionnes", "Operations Speciales"),
+        false,
+        "Recherche 'Lionnes' ne doit pas matcher 'Operations Speciales' seul"
+    );
+    assert.strictEqual(
+        isConfidentTitleMatch("Special Ops Lioness", "Opérations Spéciales : Lioness"),
+        true,
+        "Titre US doit matcher titre FR"
+    );
 
     // 2. Nettoyage et extraction de titre pour Special Ops Lioness
     const cleanLioness = extractCleanTitle("Special.Ops.Lioness.S01E01.MULTI.1080p.WEB-DL.mkv");
@@ -3096,11 +3332,22 @@ test("Lioness, Long Titles, Anime Romaji, and Prowlarr Hash Extraction", async (
     // 3. Titres à rallonge et anime
     const cleanShangri = extractCleanTitle("Shangri-La Frontier - Kusoge Hunter, Kamige ni Idoman to su S01E01.mkv");
     assert.strictEqual(cleanShangri.title, "Shangri-La Frontier");
-    assert.ok(isConfidentTitleMatch("Shangri La Frontier Kusoge Hunter Kamige ni Idoman to su", "Shangri-La Frontier"), "Titre à rallonge doit matcher le titre officiel");
+    assert.ok(
+        isConfidentTitleMatch("Shangri La Frontier Kusoge Hunter Kamige ni Idoman to su", "Shangri-La Frontier"),
+        "Titre à rallonge doit matcher le titre officiel"
+    );
 
     // 4. Détection des caractères non-latins (Devanagari, Hindi, Cyrillique, etc.)
-    assert.strictEqual(hasNonLatinCharacters("स्पेशल ऑप्स"), true, "Devanagari hindi doit être détecté comme non-latin");
-    assert.strictEqual(hasNonLatinCharacters("Opérations Spéciales : Lioness"), false, "Français avec accents est du latin pur");
+    assert.strictEqual(
+        hasNonLatinCharacters("स्पेशल ऑप्स"),
+        true,
+        "Devanagari hindi doit être détecté comme non-latin"
+    );
+    assert.strictEqual(
+        hasNonLatinCharacters("Opérations Spéciales : Lioness"),
+        false,
+        "Français avec accents est du latin pur"
+    );
     assert.strictEqual(hasNonLatinCharacters("Special Ops: Lioness"), false, "Anglais est du latin pur");
 
     // 5. Extraction universelle de hash Prowlarr
@@ -3116,7 +3363,10 @@ test("Lioness, Long Titles, Anime Romaji, and Prowlarr Hash Extraction", async (
     assert.strictEqual(extractReleaseHash(relB32), converted);
 
     // 5c. infoHash null mais présent dans magnetUrl (fréquent sur trackers FR)
-    const relMagnet = { infoHash: null, magnetUrl: "magnet:?xt=urn:btih:d3b07384d113edec49eaa6238ad5ff0012345678&dn=Lioness" };
+    const relMagnet = {
+        infoHash: null,
+        magnetUrl: "magnet:?xt=urn:btih:d3b07384d113edec49eaa6238ad5ff0012345678&dn=Lioness"
+    };
     assert.strictEqual(extractReleaseHash(relMagnet), "d3b07384d113edec49eaa6238ad5ff0012345678");
 
     // 5d. infoHash null mais présent dans downloadUrl
@@ -3126,11 +3376,20 @@ test("Lioness, Long Titles, Anime Romaji, and Prowlarr Hash Extraction", async (
     // 6. extra.search dans handleCatalog
     const mockCache = {
         series: {
-            "lioness": { groupTitle: "lioness", episodes: [{ season: 1, episode: 1, filename: "Lioness.S01E01.mkv" }] },
-            "severance": { groupTitle: "severance", episodes: [{ season: 1, episode: 1, filename: "Severance.S01E01.mkv" }] }
+            lioness: { groupTitle: "lioness", episodes: [{ season: 1, episode: 1, filename: "Lioness.S01E01.mkv" }] },
+            severance: {
+                groupTitle: "severance",
+                episodes: [{ season: 1, episode: 1, filename: "Severance.S01E01.mkv" }]
+            }
         }
     };
-    const catalogFiltered = await handleCatalog({ apiKey: "mock" }, "series", "my_ad_history_series", mockCache, "search=Lionnes");
+    const catalogFiltered = await handleCatalog(
+        { apiKey: "mock" },
+        "series",
+        "my_ad_history_series",
+        mockCache,
+        "search=Lionnes"
+    );
     assert.ok(catalogFiltered && Array.isArray(catalogFiltered.metas));
 });
 
@@ -3141,14 +3400,29 @@ test("Docker compose volume consistency, Prowlarr on-demand stream display, and 
     // 1. Vérification de la cohérence des noms de volumes dans docker-compose.yml et docker-compose.reverse-proxy.yml
     const composePath = path.join(__dirname, "..", "docker-compose.yml");
     const composeContent = fs.readFileSync(composePath, "utf8");
-    assert.ok(composeContent.includes("cinecloud-data:\n    name: cinecloud-data"), "docker-compose.yml doit avoir name: cinecloud-data");
-    assert.ok(composeContent.includes("cinecloud-warp:\n    name: cinecloud-warp"), "docker-compose.yml doit avoir name: cinecloud-warp");
-    assert.ok(!composeContent.includes("name: nuvio-alldebrid-data"), "Ne doit plus contenir l'ancien nom nuvio-alldebrid-data");
+    assert.ok(
+        composeContent.includes("cinecloud-data:\n    name: cinecloud-data"),
+        "docker-compose.yml doit avoir name: cinecloud-data"
+    );
+    assert.ok(
+        composeContent.includes("cinecloud-warp:\n    name: cinecloud-warp"),
+        "docker-compose.yml doit avoir name: cinecloud-warp"
+    );
+    assert.ok(
+        !composeContent.includes("name: nuvio-alldebrid-data"),
+        "Ne doit plus contenir l'ancien nom nuvio-alldebrid-data"
+    );
 
     const composeProxyPath = path.join(__dirname, "..", "docker-compose.reverse-proxy.yml");
     const composeProxyContent = fs.readFileSync(composeProxyPath, "utf8");
-    assert.ok(composeProxyContent.includes("cinecloud-data:\n    name: cinecloud-data"), "docker-compose.reverse-proxy.yml doit avoir name: cinecloud-data");
-    assert.ok(composeProxyContent.includes("cinecloud-warp:\n    name: cinecloud-warp"), "docker-compose.reverse-proxy.yml doit avoir name: cinecloud-warp");
+    assert.ok(
+        composeProxyContent.includes("cinecloud-data:\n    name: cinecloud-data"),
+        "docker-compose.reverse-proxy.yml doit avoir name: cinecloud-data"
+    );
+    assert.ok(
+        composeProxyContent.includes("cinecloud-warp:\n    name: cinecloud-warp"),
+        "docker-compose.reverse-proxy.yml doit avoir name: cinecloud-warp"
+    );
 
     // 2. Vérification que les packs de saison (isSeasonPack / episode: null) sont bien conservés dans parseSeasonEpisode
     const { parseSeasonEpisode } = require("../lib/helpers");
@@ -3163,7 +3437,7 @@ test("Docker compose volume consistency, Prowlarr on-demand stream display, and 
     const axios = require("axios");
     const originalGet = axios.get;
 
-    axios.get = async (url) => {
+    axios.get = async url => {
         if (url && typeof url === "string" && url.includes("/api/v1/search")) {
             return {
                 data: [
@@ -3217,8 +3491,14 @@ test("Docker compose volume consistency, Prowlarr on-demand stream display, and 
         assert.ok(streamRes && Array.isArray(streamRes.streams), "handleStream doit retourner un tableau de flux");
         // Les deux flux Prowlarr (épisode individuel + pack de saison) doivent être présents dans la liste !
         const prowlarrStreams = streamRes.streams.filter(s => s.name.includes("[AD") && s.title.includes("Prowlarr"));
-        assert.ok(prowlarrStreams.length >= 1, `Les torrents Prowlarr doivent s'afficher dans Stremio même si allowDownload=false (obtenu: ${prowlarrStreams.length})`);
-        assert.ok(prowlarrStreams.some(s => s.title.includes("YggTorrent")), "Doit contenir la release YggTorrent");
+        assert.ok(
+            prowlarrStreams.length >= 1,
+            `Les torrents Prowlarr doivent s'afficher dans Stremio même si allowDownload=false (obtenu: ${prowlarrStreams.length})`
+        );
+        assert.ok(
+            prowlarrStreams.some(s => s.title.includes("YggTorrent")),
+            "Doit contenir la release YggTorrent"
+        );
     } finally {
         axios.get = originalGet;
     }
@@ -3260,10 +3540,22 @@ test("Stream Prioritization - Instant streams are placed at top, and Prowlarr st
     });
 
     // Vérification des badges
-    assert.ok(instantStream.name.includes("[AD ⚡ Cache Global]"), "Le flux instantané doit porter le badge [AD ⚡ Cache Global]");
-    assert.ok(unconfirmedHighSeeders.name.includes("[AD 🔍]"), "Le flux Prowlarr non confirmé doit porter le badge [AD 🔍]");
-    assert.ok(unconfirmedHighSeeders.title.includes("55 seeders"), "Le sous-titre doit mentionner le nombre de seeders");
-    assert.ok(unconfirmedHighSeeders.title.includes("Vérif. cache au clic"), "Le sous-titre doit indiquer la vérification au clic");
+    assert.ok(
+        instantStream.name.includes("[AD ⚡ Cache Global]"),
+        "Le flux instantané doit porter le badge [AD ⚡ Cache Global]"
+    );
+    assert.ok(
+        unconfirmedHighSeeders.name.includes("[AD 🔍]"),
+        "Le flux Prowlarr non confirmé doit porter le badge [AD 🔍]"
+    );
+    assert.ok(
+        unconfirmedHighSeeders.title.includes("55 seeders"),
+        "Le sous-titre doit mentionner le nombre de seeders"
+    );
+    assert.ok(
+        unconfirmedHighSeeders.title.includes("Vérif. cache au clic"),
+        "Le sous-titre doit indiquer la vérification au clic"
+    );
 
     // Tri des flux : flux instantané en premier, puis tri par seeders pour les flux Prowlarr directs
     const sorted = filterAndSortStreams([unconfirmedLowSeeders, unconfirmedHighSeeders, instantStream]);
@@ -3401,7 +3693,7 @@ test("Stremio Streams - handleStream with active AllDebrid pre-validation displa
     };
     alldebrid.deleteMagnet = async () => true;
 
-    axios.get = async (url) => {
+    axios.get = async url => {
         if (url && typeof url === "string" && url.includes("/api/v1/search")) {
             return {
                 data: [
@@ -3459,11 +3751,17 @@ test("Stremio Streams - handleStream with active AllDebrid pre-validation displa
 
         assert.ok(readyStream, "Le flux ready doit être présent");
         assert.ok(readyStream.name.includes("⚡"), "Le flux ready doit porter l'éclair ⚡");
-        assert.ok(readyStream.title.includes("Instantané") || readyStream.title.includes("Pré-cache"), "Le statut ready doit être instantané");
+        assert.ok(
+            readyStream.title.includes("Instantané") || readyStream.title.includes("Pré-cache"),
+            "Le statut ready doit être instantané"
+        );
 
         assert.ok(unreadyStream, "Le flux unready doit être présent");
         assert.ok(unreadyStream.name.includes("⏳"), "Le flux unready doit porter le sablier ⏳");
-        assert.ok(unreadyStream.title.includes("Téléchargement (12 seeders)"), "Le statut unready doit indiquer Téléchargement avec seeders");
+        assert.ok(
+            unreadyStream.title.includes("Téléchargement (12 seeders)"),
+            "Le statut unready doit indiquer Téléchargement avec seeders"
+        );
     } finally {
         deleteCachedTorrent("cccc111122223333444455556666777788889999");
         deleteCachedTorrent("dddd111122223333444455556666777788889999");
@@ -3558,7 +3856,6 @@ test("Database - userCacheLRU L1 cache hit, invalidation, and Worker thread offl
         assert.ok(typeof purgedCount === "number");
         const optResult = await asyncOptimizeDatabase();
         assert.ok(optResult && optResult.success);
-
     } finally {
         deleteUser(testUuid);
         userCacheLRU.delete(testUuid);
@@ -3633,9 +3930,13 @@ test("Security - Rate Limiting on /api/check endpoints (apiCheckLimiter)", async
         // Envoi de requêtes rapides sur /api/check/alldebrid
         let rateLimited = false;
         for (let i = 0; i < 35; i++) {
-            const res = await axios.post(`${base}/api/check/alldebrid`, { apiKey: "" }, {
-                validateStatus: () => true
-            });
+            const res = await axios.post(
+                `${base}/api/check/alldebrid`,
+                { apiKey: "" },
+                {
+                    validateStatus: () => true
+                }
+            );
             if (res.status === 429) {
                 rateLimited = true;
                 assert.ok(res.data.error.includes("Trop de requêtes"));

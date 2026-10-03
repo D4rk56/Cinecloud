@@ -11,25 +11,29 @@ Toutes les contributions sont les bienvenues : signalements de bugs, améliorati
 - **Node.js** : `>= 22.0.0` (testé et validé sous Node 24)
 - **npm** : `>= 10.0.0`
 - **Git**
-- *(Optionnel)* **Docker** & **Docker Compose** pour tester l'environnement complet avec conteneur Cloudflare WARP et Prowlarr.
+- _(Optionnel)_ **Docker** & **Docker Compose** pour tester l'environnement complet avec conteneur Cloudflare WARP et Prowlarr.
 
 ---
 
 ## 2. Installation Locale
 
 1. **Cloner le dépôt :**
+
    ```bash
    git clone https://github.com/D4rk56/Cinecloud.git
    cd Cinecloud
    ```
 
 2. **Créer le fichier d'environnement local :**
+
    ```bash
    cp .env.example .env
    ```
-   *(Vous pouvez laisser les valeurs par défaut : les secrets et mots de passe d'administration sont auto-générés de façon sécurisée au démarrage).*
+
+   _(Vous pouvez laisser les valeurs par défaut : les secrets et mots de passe d'administration sont auto-générés de façon sécurisée au démarrage)._
 
 3. **Installer les dépendances :**
+
    ```bash
    npm install
    ```
@@ -77,22 +81,28 @@ nuvio-alldebrid/
 Le projet applique des exigences de qualité strictes. Tout changement doit être validé par la suite de tests et respecter le linter.
 
 ### Lancer les tests unitaires et d'intégration
+
 ```bash
 npm test
 ```
-*ou directement avec Node.js :*
+
+_ou directement avec Node.js :_
+
 ```bash
 node --test test/addon.test.js
 ```
+
 > [!NOTE]
 > L'ensemble des 99+ tests existants doivent passer avec succès (`0 fail`, `0 error`).
 
 ### Vérifier le style avec ESLint
+
 ```bash
 npm run lint
 ```
 
 ### Vérifier / Appliquer le formatage Prettier
+
 ```bash
 # Vérifier la conformité du code
 npm run format:check

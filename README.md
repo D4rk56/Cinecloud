@@ -14,32 +14,38 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
 ## ✨ Fonctionnalités Principales
 
 ### ⚡ Double Support Débrideur (AllDebrid & Torbox)
-- **AllDebrid** : Intégration complète avec débridage instantané, flux Cloud personnels (*Mes Magnets*, *Liens Débridés*, *Historique*) et gestion du pré-cache.
+
+- **AllDebrid** : Intégration complète avec débridage instantané, flux Cloud personnels (_Mes Magnets_, _Liens Débridés_, _Historique_) et gestion du pré-cache.
 - **Torbox** : Support complet avec vérification instantanée de disponibilité et lecture directe haute performance.
 - **Résolveur Lazy intelligent** : Redirection 302 instantanée vers les flux CDN avec bascule automatique (failover) sur les miroirs disponibles.
 
 ### 🛡️ Contournement des Blocages IP VPS (Cloudflare WARP)
+
 - Sur un serveur VPS ou Cloud (Hetzner, OVH, Scaleway, Oracle, etc.), les requêtes vers AllDebrid peuvent être restreintes en raison des IP de datacenters.
 - Cinécloud intègre un conteneur sidecar **Cloudflare WARP** qui achemine les requêtes de débridage via une IP résidentielle/edge propre et acceptée sans restriction.
 - Les requêtes Cinemeta, TMDB et le trafic de streaming vidéo direct restent acheminés hors proxy pour une vitesse maximale.
 
 ### 🔍 Indexation Prowlarr & Crowdsourcing Intelligent
-- **Cache mutualisé SQLite (WAL)** : Tous les torrents indexés et vérifiés comme instantanément disponibles sont partagés entre utilisateurs selon le mode choisi (*Partagé*, *Local* ou *Privé*).
+
+- **Cache mutualisé SQLite (WAL)** : Tous les torrents indexés et vérifiés comme instantanément disponibles sont partagés entre utilisateurs selon le mode choisi (_Partagé_, _Local_ ou _Privé_).
 - **Synchronisation RSS d'arrière-plan** : Alimentation continue des dernières sorties films et séries.
 - **Recherche à la demande (On-Demand)** : Interrogation instantanée de votre Prowlarr lorsqu'un contenu n'est pas encore en cache.
 - **Intégration Lumio** : Option pour enrichir les flux instantanés à la demande via votre manifest perso Lumio.
 
 ### 🇯🇵 Module Spécialisé Animés (Anitomy & Mapping Fribb)
+
 - **Extraction précise des métadonnées** via `@iktakahiro/anitomy-js` (titre épuré, saison, épisode, groupe de release, résolution, codec).
 - **Mapping communautaire Fribb (`anime-lists`)** indexé en mémoire au démarrage pour une conversion instantanée `Kitsu` ↔ `IMDb` ↔ `TheTVDB` ↔ `TMDB`.
-- **Fuzzy matching** et normalisation robuste pour réconcilier les numérotations absolues (ex. *Ep 35*) avec les saisons IMDb/TMDB (ex. *S02E11*).
+- **Fuzzy matching** et normalisation robuste pour réconcilier les numérotations absolues (ex. _Ep 35_) avec les saisons IMDb/TMDB (ex. _S02E11_).
 
 ### 🎨 Formateur de Flux Épuré & Lisible
+
 - Format compact style AIOStreams en 2 colonnes :
   - **Gauche :** `[AD ⚡]` ou `[TB ⚡]` + Résolution (`4K ⭐`, `1080p ⭐`, etc.).
   - **Droite :** Titre propre, détails vidéo/audio, langues audio (`🇫🇷 MULTI / VFF`, `🇬🇧 VO`), provenance de l'indexeur et badge de cache clair (`⚡ Cache Global`, `⚡ Pré-cache RSS`, `⚡ Instantané Lumio` ou `⏳ Téléchargement`).
 
 ### 📱 Configuration Ergonomique & Profils en 1 Clic
+
 - **3 Profils Rapides en 1 clic** :
   - 📱 **Mobile 4G** : 1080p max, limitation de taille de fichier (~6 Go), économie de données.
   - 📺 **Smart TV** : 4K & 1080p équilibré, tri par qualité et disponibilité immédiate.
@@ -48,6 +54,7 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
 - **Mise à jour sans réinstallation** : Modifiez vos réglages (langues, résolutions, tris) à tout moment grâce à votre UUID et mot de passe, sans réinstaller l'addon dans Stremio.
 
 ### 🛡️ Panneau d'Administration en Temps Réel (`/admin`)
+
 - **Tableau de bord KPI** : Utilisateurs inscrits, actifs 24h, torrents en cache et **Taux de Disponibilité Instantanée (%)**.
 - **Sondes de santé en direct** : Test instantané de latence et connectivité des APIs AllDebrid et Torbox.
 - **Classement des Top Recherches** : Visualisation des titres les plus demandés avec filtre textuel en direct.
@@ -60,28 +67,34 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
 ## 🚀 Déploiement Rapide avec Docker Compose
 
 L'image officielle est disponible sur **GitHub Container Registry (GHCR)** :
-`ghcr.io/d4rk56/cinecloud:latest` *(compatible architectures `linux/amd64` et `linux/arm64`)*.
+`ghcr.io/d4rk56/cinecloud:latest` _(compatible architectures `linux/amd64` et `linux/arm64`)_.
 
 ### Option 1 : Déploiement avec Cloudflare Tunnel & WARP (Recommandé)
 
 Ce mode lance :
+
 1. **`warp`** : Proxy Cloudflare WARP pour contourner les blocages VPS.
 2. **`cinecloud`** : L'addon Cinécloud.
 3. **`tunnel`** : Cloudflare Tunnel éphémère (`trycloudflare.com`) pour un accès HTTPS sécurisé **sans ouvrir de port sur votre routeur**.
 
 #### 1. Démarrer les services
+
 ```bash
 docker compose up -d
 ```
 
 #### 2. Récupérer l'URL sécurisée
+
 Affichez les logs du tunnel pour récupérer votre URL `https://xxxx.trycloudflare.com` :
+
 ```bash
 docker logs cinecloud-tunnel 2>&1 | grep trycloudflare
 ```
 
 #### 3. Configurer vos accès
+
 Ouvrez l'URL obtenue dans votre navigateur :
+
 - Page de configuration : `https://xxxx.trycloudflare.com/`
 - Panneau d'administration : `https://xxxx.trycloudflare.com/admin` (mot de passe par défaut : `admin123`)
 
@@ -98,6 +111,7 @@ docker compose -f docker-compose.reverse-proxy.yml up -d
 Ce mode lie le port de l'addon exclusivement sur `127.0.0.1:3000` (localhost) pour une sécurité maximale.
 
 Exemple de bloc Nginx :
+
 ```nginx
 server {
     server_name cinecloud.mondomaine.fr;
@@ -116,17 +130,17 @@ server {
 
 ## ⚙️ Variables d'Environnement
 
-| Variable | Description | Valeur par défaut |
-| :--- | :--- | :--- |
-| `PORT` | Port d'écoute HTTP du serveur | `3000` |
-| `NODE_ENV` | Environnement d'exécution | `production` |
-| `WARP_PROXY` | Adresse du proxy WARP sortant (HTTP ou SOCKS5) | `http://warp:1080` |
-| `APP_SECRET` | Clé secrète AES-256-GCM pour le chiffrement des données | *Générée automatiquement si absente* |
-| `ADMIN_PASSWORD` | Mot de passe d'accès au panneau `/admin` | `admin123` |
-| `PROWLARR_URL` | URL de votre instance Prowlarr globale (optionnel) | `http://prowlarr:9696` |
-| `PROWLARR_KEY` | Clé API de votre instance Prowlarr globale (optionnel) | *Vide* |
-| `HTTP_TIMEOUT` | Timeout par défaut des requêtes AllDebrid (ms) | `10000` |
-| `PROWLARR_TIMEOUT` | Timeout des requêtes Prowlarr on-demand (ms) | `8000` |
+| Variable           | Description                                             | Valeur par défaut                    |
+| :----------------- | :------------------------------------------------------ | :----------------------------------- |
+| `PORT`             | Port d'écoute HTTP du serveur                           | `3000`                               |
+| `NODE_ENV`         | Environnement d'exécution                               | `production`                         |
+| `WARP_PROXY`       | Adresse du proxy WARP sortant (HTTP ou SOCKS5)          | `http://warp:1080`                   |
+| `APP_SECRET`       | Clé secrète AES-256-GCM pour le chiffrement des données | _Générée automatiquement si absente_ |
+| `ADMIN_PASSWORD`   | Mot de passe d'accès au panneau `/admin`                | `admin123`                           |
+| `PROWLARR_URL`     | URL de votre instance Prowlarr globale (optionnel)      | `http://prowlarr:9696`               |
+| `PROWLARR_KEY`     | Clé API de votre instance Prowlarr globale (optionnel)  | _Vide_                               |
+| `HTTP_TIMEOUT`     | Timeout par défaut des requêtes AllDebrid (ms)          | `10000`                              |
+| `PROWLARR_TIMEOUT` | Timeout des requêtes Prowlarr on-demand (ms)            | `8000`                               |
 
 ---
 

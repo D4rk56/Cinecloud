@@ -34,31 +34,25 @@ test("Task 1 - .env.example complet et validation au boot (fail-fast)", () => {
     assert.ok(content.includes("ALLDEBRID_API_KEY="), ".env.example doit documenter ALLDEBRID_API_KEY");
     assert.ok(content.includes("TORBOX_API_KEY="), ".env.example doit documenter TORBOX_API_KEY");
     assert.ok(content.includes("TMDB_API_KEY="), ".env.example doit documenter TMDB_API_KEY");
+    assert.ok(content.includes("CORS_ALLOWED_ORIGINS="), ".env.example doit documenter CORS_ALLOWED_ORIGINS");
 
-    // 2. Validation au boot : cas valides
+    // 2. Validation au boot : cas valides via validateEnv et envSchema
     const validConfig = validateEnv({
         PORT: "3000",
         NODE_ENV: "production",
         WARP_PROXY: "http://warp:1080",
         PROWLARR_URL: "http://prowlarr:9696",
         APP_SECRET: "0123456789abcdef0123456789abcdef",
-        ADMIN_PASSWORD: "monMotDePasseAdminSuperSecurise2026"
+        ADMIN_PASSWORD: "monMotDePasseAdminSuperSecurise2026",
+        CORS_ALLOWED_ORIGINS: "http://localhost:5173,https://admin.mondomaine.fr"
     });
     assert.ok(validConfig, "Une configuration valide doit être acceptée");
+    assert.equal(envSchema.safeParse(validConfig).success, true);
 
     // 3. Fail-fast sur PORT invalide
-    assert.throws(
-        () => validateEnv({ PORT: "abc" }),
-        /PORT doit être un entier valide/
-    );
-    assert.throws(
-        () => validateEnv({ PORT: "70000" }),
-        /PORT doit être un entier valide/
-    );
-    assert.throws(
-        () => validateEnv({ PORT: "-5" }),
-        /PORT doit être un entier valide/
-    );
+    assert.throws(() => validateEnv({ PORT: "abc" }), /PORT doit être un entier valide/);
+    assert.throws(() => validateEnv({ PORT: "70000" }), /PORT doit être un entier valide/);
+    assert.throws(() => validateEnv({ PORT: "-5" }), /PORT doit être un entier valide/);
 
     // 4. Fail-fast sur URL Prowlarr invalide
     assert.throws(
@@ -67,29 +61,27 @@ test("Task 1 - .env.example complet et validation au boot (fail-fast)", () => {
     );
 
     // 5. Fail-fast sur URL Proxy invalide
-    assert.throws(
-        () => validateEnv({ WARP_PROXY: "ftp://mauvais-proxy" }),
-        /WARP_PROXY doit être une URL valide/
-    );
+    assert.throws(() => validateEnv({ WARP_PROXY: "ftp://mauvais-proxy" }), /WARP_PROXY doit être une URL valide/);
 
     // 6. Fail-fast sur APP_SECRET trop court (< 16 caractères)
+    assert.throws(() => validateEnv({ APP_SECRET: "tropcourt" }), /APP_SECRET doit comporter au minimum 16 caractères/);
+
+    // 7. Fail-fast sur ADMIN_PASSWORD = admin123 en production (sans muter process.env)
     assert.throws(
-        () => validateEnv({ APP_SECRET: "tropcourt" }),
-        /APP_SECRET doit comporter au minimum 16 caractères/
+        () => validateEnv({ NODE_ENV: "production", ADMIN_PASSWORD: "admin123" }),
+        /ne doit pas utiliser le mot de passe par défaut 'admin123'/
     );
 
-    // 7. Fail-fast sur ADMIN_PASSWORD = admin123 en production
+    // 8. Fail-fast sur ADMIN_PASSWORD trop court (< 8 caractères)
     assert.throws(
-        () => {
-            const origEnv = process.env.NODE_ENV;
-            try {
-                process.env.NODE_ENV = "production";
-                validateEnv({ NODE_ENV: "production", ADMIN_PASSWORD: "admin123" });
-            } finally {
-                process.env.NODE_ENV = origEnv;
-            }
-        },
-        /ne doit pas utiliser le mot de passe par défaut 'admin123'/
+        () => validateEnv({ ADMIN_PASSWORD: "short" }),
+        /ADMIN_PASSWORD doit comporter au moins 8 caractères/
+    );
+
+    // 9. Fail-fast sur CORS_ALLOWED_ORIGINS invalide
+    assert.throws(
+        () => validateEnv({ CORS_ALLOWED_ORIGINS: "ftp://invalid-origin; bad" }),
+        /CORS_ALLOWED_ORIGINS doit contenir des origines/
     );
 });
 
@@ -144,6 +136,19 @@ test("Task 4 - Permissions sécurisées 0600 sur .app_secret et .admin_password"
         if (process.platform !== "win32") {
             const stats = fs.statSync(tmpFile);
             assert.equal(stats.mode & 0o777, 0o600, "Sur POSIX, le fichier doit être en mode 0600 strict");
+        } else {
+            // Test robuste Windows même si les variables USERNAME et USER sont absentes
+            const origUsername = process.env.USERNAME;
+            const origUser = process.env.USER;
+            try {
+                delete process.env.USERNAME;
+                delete process.env.USER;
+                const winRes = secureFilePermissions(tmpFile);
+                assert.equal(winRes, true, "Doit réussir sur Windows via fallback os.userInfo()");
+            } finally {
+                if (origUsername) process.env.USERNAME = origUsername;
+                if (origUser) process.env.USER = origUser;
+            }
         }
     } finally {
         if (fs.existsSync(tmpFile)) {
@@ -178,12 +183,16 @@ test("Task 5 - Validation robuste des entrées sur les routes admin (/api/admin/
         assert.equal(loginSchema.safeParse({}).success, false);
 
         assert.equal(usersQuerySchema.safeParse({ sortBy: "alpha" }).success, true);
+        assert.equal(usersQuerySchema.safeParse({ sortBy: "" }).success, true);
+        assert.equal(usersQuerySchema.safeParse({ sortBy: "" }).data.sortBy, "newest");
         assert.equal(usersQuerySchema.safeParse({ sortBy: "invalide" }).success, false);
 
         assert.equal(userDeleteParamsSchema.safeParse({ uuid: "12345678-1234-1234-1234-123456789abc" }).success, true);
         assert.equal(userDeleteParamsSchema.safeParse({ uuid: "bad-uuid" }).success, false);
 
         assert.equal(logsQuerySchema.safeParse({ level: "ERROR", limit: 50 }).success, true);
+        assert.equal(logsQuerySchema.safeParse({ level: "" }).success, true);
+        assert.equal(logsQuerySchema.safeParse({ level: "info" }).data.level, "INFO");
         assert.equal(logsQuerySchema.safeParse({ level: "FATAL" }).success, false);
         assert.equal(logsQuerySchema.safeParse({ limit: 50000 }).success, false);
 
@@ -193,6 +202,12 @@ test("Task 5 - Validation robuste des entrées sur les routes admin (/api/admin/
 
         assert.equal(cacheClearSchema.safeParse({ target: "torrents" }).success, true);
         assert.equal(cacheClearSchema.safeParse({ target: "invalid_target" }).success, false);
+
+        assert.equal(cleanupMagnetsSchema.safeParse({ apiKey: "valid_key" }).success, true);
+        assert.equal(cleanupMagnetsSchema.safeParse({}).success, true);
+        assert.equal(cleanupMagnetsSchema.safeParse(undefined).success, true);
+        assert.equal(cleanupMagnetsSchema.safeParse({ apiKey: "" }).success, false);
+        assert.equal(cleanupMagnetsSchema.safeParse({ apiKey: "a".repeat(300) }).success, false);
 
         // 2. Connexion admin valide pour obtenir le token
         const loginRes = await axios.post(`${base}/api/admin/login`, {
@@ -219,6 +234,10 @@ test("Task 5 - Validation robuste des entrées sur les routes admin (/api/admin/
             assert.equal(err.response?.status, 400);
         }
 
+        // Test succès sur GET /api/admin/users avec query vide
+        const usersEmptyRes = await axios.get(`${base}/api/admin/users?sortBy=`, { headers: authHeaders });
+        assert.equal(usersEmptyRes.status, 200);
+
         // 5. Test rejet 400 sur DELETE /api/admin/users/:uuid avec format invalide
         try {
             await axios.delete(`${base}/api/admin/users/not-a-valid-uuid`, { headers: authHeaders });
@@ -234,6 +253,10 @@ test("Task 5 - Validation robuste des entrées sur les routes admin (/api/admin/
         } catch (err) {
             assert.equal(err.response?.status, 400);
         }
+
+        // Test succès sur GET /api/admin/logs avec level en minuscule ou vide
+        const logsRes = await axios.get(`${base}/api/admin/logs?level=info&limit=10`, { headers: authHeaders });
+        assert.equal(logsRes.status, 200);
 
         // 7. Test rejet 400 sur POST /api/admin/settings avec timeout trop faible (< 1000ms)
         try {
@@ -270,9 +293,25 @@ test("Task 5 - Validation robuste des entrées sur les routes admin (/api/admin/
         }
 
         // 11. Test succès 200 sur POST /api/admin/cache/clear avec cible valide
-        const clearRes = await axios.post(`${base}/api/admin/cache/clear`, { target: "searches" }, { headers: authHeaders });
+        const clearRes = await axios.post(
+            `${base}/api/admin/cache/clear`,
+            { target: "searches" },
+            { headers: authHeaders }
+        );
         assert.equal(clearRes.status, 200);
         assert.equal(clearRes.data.success, true);
+
+        // 12. Test rejet 400 sur POST /api/admin/cleanup-magnets avec clé vide
+        try {
+            await axios.post(`${base}/api/admin/cleanup-magnets`, { apiKey: "" }, { headers: authHeaders });
+            assert.fail("Doit lever une erreur 400 pour une clé vide");
+        } catch (err) {
+            assert.equal(err.response?.status, 400);
+        }
+
+        // 13. Test succès sur POST /api/admin/cleanup-magnets avec corps vide (comme le bouton UI)
+        const cleanupEmptyRes = await axios.post(`${base}/api/admin/cleanup-magnets`, {}, { headers: authHeaders });
+        assert.equal(cleanupEmptyRes.status, 200);
     } finally {
         server.close();
     }
