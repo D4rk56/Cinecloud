@@ -72,9 +72,9 @@ services:
 
 volumes:
   cinecloud-data:
-    name: nuvio-alldebrid-data
+    name: cinecloud-data
   cinecloud-warp:
-    name: nuvio-alldebrid-warp
+    name: cinecloud-warp
 
 # networks:
 #   proxy_network:

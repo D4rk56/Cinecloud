@@ -76,9 +76,9 @@ services:
 
 volumes:
   cinecloud-data:
-    name: nuvio-alldebrid-data
+    name: cinecloud-data
   cinecloud-warp:
-    name: nuvio-alldebrid-warp
+    name: cinecloud-warp
 
 # Pour connecter cinecloud au même réseau Docker que votre Prowlarr existant :
 # 1. Dans le service 'cinecloud' ci-dessus, ajoutez :

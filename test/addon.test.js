@@ -3119,3 +3119,94 @@ test("Lioness, Long Titles, Anime Romaji, and Prowlarr Hash Extraction", async (
     assert.ok(catalogFiltered && Array.isArray(catalogFiltered.metas));
 });
 
+test("Docker compose volume consistency, Prowlarr on-demand stream display, and Season Pack retention", async () => {
+    const fs = require("fs");
+    const path = require("path");
+
+    // 1. Vérification de la cohérence des noms de volumes dans docker-compose.yml et docker-compose.reverse-proxy.yml
+    const composePath = path.join(__dirname, "..", "docker-compose.yml");
+    const composeContent = fs.readFileSync(composePath, "utf8");
+    assert.ok(composeContent.includes("cinecloud-data:\n    name: cinecloud-data"), "docker-compose.yml doit avoir name: cinecloud-data");
+    assert.ok(composeContent.includes("cinecloud-warp:\n    name: cinecloud-warp"), "docker-compose.yml doit avoir name: cinecloud-warp");
+    assert.ok(!composeContent.includes("name: nuvio-alldebrid-data"), "Ne doit plus contenir l'ancien nom nuvio-alldebrid-data");
+
+    const composeProxyPath = path.join(__dirname, "..", "docker-compose.reverse-proxy.yml");
+    const composeProxyContent = fs.readFileSync(composeProxyPath, "utf8");
+    assert.ok(composeProxyContent.includes("cinecloud-data:\n    name: cinecloud-data"), "docker-compose.reverse-proxy.yml doit avoir name: cinecloud-data");
+    assert.ok(composeProxyContent.includes("cinecloud-warp:\n    name: cinecloud-warp"), "docker-compose.reverse-proxy.yml doit avoir name: cinecloud-warp");
+
+    // 2. Vérification que les packs de saison (isSeasonPack / episode: null) sont bien conservés dans parseSeasonEpisode
+    const { parseSeasonEpisode } = require("../lib/helpers");
+    const seasonPack = parseSeasonEpisode("Lioness.S01.COMPLETE.FRENCH.1080p.WEB-DL");
+    assert.ok(seasonPack, "Doit parser le pack de saison");
+    assert.strictEqual(seasonPack.season, 1);
+    assert.strictEqual(seasonPack.episode, null);
+    assert.strictEqual(seasonPack.isSeasonPack, true);
+
+    // 3. Vérification que handleStream affiche les torrents Prowlarr même si allowDownload=false
+    const { handleStream } = require("../lib/stremio");
+    const axios = require("axios");
+    const originalGet = axios.get;
+
+    axios.get = async (url) => {
+        if (url && typeof url === "string" && url.includes("/api/v1/search")) {
+            return {
+                data: [
+                    {
+                        title: "Special.Ops.Lioness.S01E01.FRENCH.1080p.WEB.H264-FW",
+                        infoHash: "aabbccddeeff00112233445566778899aabbccdd",
+                        size: 2500000000,
+                        indexer: "YggTorrent",
+                        seeders: 15
+                    },
+                    {
+                        title: "Special.Ops.Lioness.S01.COMPLETE.FRENCH.1080p.WEB.H264-FW",
+                        infoHash: "1122334455667788990011223344556677889900",
+                        size: 20000000000,
+                        indexer: "Sharewood",
+                        seeders: 22
+                    }
+                ]
+            };
+        }
+        if (url && typeof url === "string" && url.includes("cinemeta.strem.io/meta/series")) {
+            return {
+                data: {
+                    meta: {
+                        id: "tt14755822",
+                        name: "Special Ops: Lioness",
+                        year: 2023
+                    }
+                }
+            };
+        }
+        return { data: { streams: [] } };
+    };
+
+    try {
+        const streamRes = await handleStream(
+            {
+                apiKey: "mock_ad_key",
+                prowlarrUrl: "http://mock-prowlarr:9696",
+                prowlarrKey: "mock_key",
+                prowlarrMode: "direct",
+                allowDownload: false // L'utilisateur n'a PAS coché allowDownload (valeur par défaut)
+            },
+            "series",
+            "tt14755822:1:1",
+            {},
+            "http://localhost:3000",
+            "mock-user"
+        );
+
+        assert.ok(streamRes && Array.isArray(streamRes.streams), "handleStream doit retourner un tableau de flux");
+        // Les deux flux Prowlarr (épisode individuel + pack de saison) doivent être présents dans la liste !
+        const prowlarrStreams = streamRes.streams.filter(s => s.name.includes("[AD") && s.title.includes("Prowlarr"));
+        assert.ok(prowlarrStreams.length >= 1, `Les torrents Prowlarr doivent s'afficher dans Stremio même si allowDownload=false (obtenu: ${prowlarrStreams.length})`);
+        assert.ok(prowlarrStreams.some(s => s.title.includes("YggTorrent")), "Doit contenir la release YggTorrent");
+    } finally {
+        axios.get = originalGet;
+    }
+});
+
+
