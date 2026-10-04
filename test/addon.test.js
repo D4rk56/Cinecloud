@@ -4065,3 +4065,165 @@ test("Security - Rate Limiting on /api/check endpoints (apiCheckLimiter)", async
         server.close();
     }
 });
+
+test("Helpers - artefacts (sample/bonus/zip) exclus et packs COMPLETE détectés", () => {
+    const { isRealVideoFile, isExcludedArtifact, isCompleteSeriesPack, NON_VIDEO_EXT_RE, parseSeasonEpisode } =
+        require("../lib/helpers");
+
+    // 1. isRealVideoFile : rejette les contenus annexes même en extension vidéo
+    for (const name of [
+        "Movie.2024.SAMPLE.mkv",
+        "Movie.2024.sample.mkv",
+        "Movie.2024.BONUS.mkv",
+        "Movie.2024.TRAILER.mkv",
+        "Movie.2024.Teaser.mkv",
+        "Movie.2024.Featurette.mkv",
+        "Movie.2024.Making.Of.mkv",
+        "Movie.2024.Deleted.Scenes.mkv",
+        "Movie.2024.Extras.mkv",
+        "Movie.2024.Interview.mkv"
+    ]) {
+        assert.equal(isRealVideoFile(name), false, `${name} doit être exclu (contenu annexe)`);
+    }
+
+    // 2. isRealVideoFile : conserve les vrais fichiers vidéo + éditions légitimes (non-régression)
+    for (const name of [
+        "Movie.2024.1080p.WEB-DL.mkv",
+        "Movie.2024.2160p.REMUX.mp4",
+        "Serie.S01E01.1080p.mkv",
+        "https://cdn.example/movie.mkv?token=abc123",
+        "Movie.Extended.Cut.mkv",
+        "Movie.Special.Edition.mkv",
+        "Movie.UNRATED.mkv",
+        "Movie.IMAX.2160p.mkv",
+        "Movie.Remastered.mkv",
+        "Movie.Directors.Cut.mkv",
+        "Serie.S01E01.Extraordinary.mkv"
+    ]) {
+        assert.equal(isRealVideoFile(name), true, `${name} doit être conservé`);
+    }
+
+    // 3. Artefacts non vidéo (archives, sous-titres, images, audio…)
+    for (const name of [
+        "Film.2024.zip",
+        "Film.2024.rar",
+        "Film.2024.part01.rar",
+        "Film.2024.7z",
+        "Film.2024.iso",
+        "subs.srt",
+        "subs.ass",
+        "info.nfo",
+        "checksum.sfv",
+        "cover.jpg",
+        "cover.png",
+        "audio.mp3",
+        "audio.flac",
+        "notes.txt",
+        "doc.pdf",
+        "release.torrent",
+        "payload.exe"
+    ]) {
+        assert.equal(isExcludedArtifact(name), true, `${name} doit être exclu`);
+    }
+    for (const name of ["Film.2024.mkv", "Film.2024.mp4", "Serie.S01E01.1080p.mkv", "Film.Extended.Cut.mkv"]) {
+        assert.equal(isExcludedArtifact(name), false, `${name} ne doit PAS être exclu`);
+    }
+
+    // 4. NON_VIDEO_EXT_RE directement
+    assert.ok(NON_VIDEO_EXT_RE.test("a.zip"), "zip exclu");
+    assert.ok(NON_VIDEO_EXT_RE.test("a.rar"), "rar exclu");
+    assert.ok(NON_VIDEO_EXT_RE.test("a.r42"), "partie rar exclue");
+    assert.ok(NON_VIDEO_EXT_RE.test("a.srt"), "srt exclu");
+    assert.ok(NON_VIDEO_EXT_RE.test("a.jpg"), "jpg exclu");
+    assert.ok(!NON_VIDEO_EXT_RE.test("a.mkv"), "mkv non exclu");
+    assert.ok(!NON_VIDEO_EXT_RE.test("a.mp4"), "mp4 non exclu");
+
+    // 5. Packs de série complète
+    for (const name of [
+        "Breaking Bad COMPLETE FRENCH 1080p",
+        "Serie.INTEGRALE.720p",
+        "Serie.INTÉGRALE.720p",
+        "Ma Serie COFFRET 1080p",
+        "Anime BATCH 1080p",
+        "Show S01-S03 1080p",
+        "Ma Série - Toutes les saisons",
+        "The Complete Series 1080p"
+    ]) {
+        assert.equal(isCompleteSeriesPack(name), true, `${name} doit être détecté comme pack`);
+    }
+    // Non-régression : ces libellés ne doivent PAS déclencher la détection de pack
+    for (const name of ["Movie Extended Cut", "Film.2024.1080p.WEB-DL", "Movie Special Edition"]) {
+        assert.equal(isCompleteSeriesPack(name), false, `${name} ne doit PAS être un pack`);
+    }
+
+    // 6. Non-régression : parseSeasonEpisode reste inchangé sur un pack de saison classique
+    const sp = parseSeasonEpisode("Lioness.S01.COMPLETE.FRENCH.1080p.WEB-DL");
+    assert.ok(sp, "Le pack de saison doit être parsé");
+    assert.strictEqual(sp.season, 1);
+    assert.strictEqual(sp.episode, null);
+    assert.strictEqual(sp.isSeasonPack, true);
+});
+
+test("Catalogues - artefacts (sample/bonus/zip/srt) exclus de l'historique", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+    const originalAdGet = alldebrid.adGet;
+    const originalGet = axios.get;
+
+    const mockCache = { series: {}, movies: {}, classification: {} };
+    const mockConfig = { apiKey: "test_key", tmdbKey: "default" };
+
+    // Chaque entrée a un titre DISTINCT : sans le filtre, chaque artefact créerait sa propre fiche.
+    alldebrid.adGet = async endpoint => {
+        if (endpoint === "/v4/user/history") {
+            return {
+                data: {
+                    status: "success",
+                    data: {
+                        links: [
+                            { filename: "Real.Movie.2024.1080p.mkv", link: "https://ad.link/real" },
+                            { filename: "Sample.Only.2024.SAMPLE.mkv", link: "https://ad.link/sample" },
+                            { filename: "Bonus.Only.2024.BONUS.mkv", link: "https://ad.link/bonus" },
+                            { filename: "Trailer.Only.2024.TRAILER.mkv", link: "https://ad.link/trailer" },
+                            { filename: "Archive.Only.2024.zip", link: "https://ad.link/zip" },
+                            { filename: "Subtitle.Only.2024.srt", link: "https://ad.link/srt" }
+                        ]
+                    }
+                }
+            };
+        }
+        return { data: { status: "error" } };
+    };
+
+    // Le mock renvoie une fiche par titre recherché (pour que l'absence de filtre se voie)
+    axios.get = async url => {
+        const u = decodeURIComponent(typeof url === "string" ? url : "");
+        if (u.includes("cinemeta.strem.io/catalog/movie")) {
+            if (/sample/i.test(u))
+                return { data: { metas: [{ id: "tt1111111", imdb_id: "tt1111111", name: "Sample Only", year: "2024" }] } };
+            if (/bonus/i.test(u))
+                return { data: { metas: [{ id: "tt2222222", imdb_id: "tt2222222", name: "Bonus Only", year: "2024" }] } };
+            if (/trailer/i.test(u))
+                return {
+                    data: { metas: [{ id: "tt3333333", imdb_id: "tt3333333", name: "Trailer Only", year: "2024" }] }
+                };
+            return { data: { metas: [{ id: "tt1234567", imdb_id: "tt1234567", name: "Real Movie", year: "2024" }] } };
+        }
+        return { data: {} };
+    };
+
+    try {
+        const res = await handleCatalog(mockConfig, "movie", "my_ad_history", mockCache);
+        assert.ok(Array.isArray(res.metas), "metas doit être un tableau");
+        assert.equal(
+            res.metas.length,
+            1,
+            "Seul le vrai film doit apparaître : les artefacts (sample/bonus/trailer/zip/srt) sont exclus"
+        );
+        assert.match(String(res.metas[0].name || ""), /real movie/i, "La fiche restante est le vrai film");
+    } finally {
+        alldebrid.adGet = originalAdGet;
+        axios.get = originalGet;
+    }
+});
