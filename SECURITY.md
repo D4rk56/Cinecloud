@@ -74,6 +74,19 @@ CinéCloud FR est conçu selon le principe de **défense en profondeur** (_defen
   `req.ip` correspond alors à l'adresse socket réelle, non falsifiable. Elle ne doit être activée
   (`TRUST_PROXY=1`) que derrière un reverse proxy / tunnel de confiance.
 
+### H. Secrets dans les URLs : contrainte imposée par l'API Torbox
+
+- Principe général : les clés API sont transmises en **en-tête** (`Authorization: Bearer …`) et
+  **jamais** dans les URLs, afin d'éviter leur fuite via les journaux, proxys et historiques.
+- **Exception documentée** : l'endpoint `GET /v1/api/torrents/requestdl` de Torbox **exige** le token
+  en **paramètre de requête** (`?token=…`). Un appel avec le seul en-tête `Authorization` échoue en
+  **HTTP 422** (`{"detail":[{"loc":["query","token"],"msg":"Field required"}]}`) — vérifié sur
+  `api.torbox.app`. L'en-tête est donc envoyé en plus du paramètre, jamais à sa place.
+- Mesures compensatoires appliquées : la requête est **strictement côté serveur** (jamais exposée au
+  client), l'URL complète n'est **jamais journalisée** (seuls le code HTTP et le message d'erreur de
+  l'API le sont), et l'URL CDN retournée est **rejetée** si elle contient la clé, garantissant que le
+  client ne reçoit qu'une URL signée sans secret.
+
 ---
 
 ## 3. Signalement Responsable de Vulnérabilité

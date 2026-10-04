@@ -1421,7 +1421,9 @@ test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async 
     assert.equal(emptyKeyRes.valid, false);
 
     try {
-        // 2. Résolution du lien CDN côté serveur : la clé ne doit JAMAIS apparaître dans l'URL/query
+        // 2. Résolution du lien CDN côté serveur.
+        // IMPORTANT : Torbox EXIGE le token en paramètre de requête sur /torrents/requestdl
+        // (l'en-tête Authorization seul provoque un HTTP 422 "query.token: Field required").
         let capturedUrl = null;
         let capturedConfig = null;
         torboxApi.get = async function (url, config) {
@@ -1433,11 +1435,10 @@ test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async 
         const streamUrl = await getTorboxStreamUrl(1234, 5, "my_test_torbox_key");
         assert.equal(streamUrl, "https://storage.torbox.app/cdn/video.mp4");
         assert.ok(capturedUrl && capturedUrl.includes("/torrents/requestdl"), "Doit appeler requestdl");
-        assert.ok(!capturedUrl.includes("token="), "La clé ne doit pas apparaître dans l'URL");
-        assert.ok(
-            !capturedConfig || !capturedConfig.params || !("token" in capturedConfig.params),
-            "La clé ne doit pas être passée en query string"
-        );
+        assert.equal(capturedConfig.params.token, "my_test_torbox_key", "Le token doit être en query (exigence API Torbox)");
+        assert.equal(capturedConfig.params.torrent_id, 1234);
+        assert.equal(capturedConfig.params.file_id, 5);
+        assert.equal(capturedConfig.params.redirect, false, "redirect doit être un booléen");
         assert.equal(capturedConfig.headers.Authorization, "Bearer my_test_torbox_key");
     } finally {
         torboxApi.get = origGet;
@@ -1550,10 +1551,10 @@ test("Torbox - unlockTorboxFileTarget resolves tb_cloud and handles direct URLs"
 
         const cloudRef = await unlockTorboxFileTarget("key123", "tb_cloud:456:78");
         assert.equal(cloudRef, "https://storage.torbox.app/cdn/resolved.mp4");
-        assert.ok(
-            !capturedConfig || !capturedConfig.params || !("token" in capturedConfig.params),
-            "La clé Torbox ne doit pas être passée en query string"
-        );
+        // Torbox exige le token en query sur requestdl (l'en-tête seul renvoie un 422)
+        assert.equal(capturedConfig.params.token, "key123", "Le token doit être transmis en query (exigence Torbox)");
+        assert.equal(capturedConfig.params.torrent_id, "456");
+        assert.equal(capturedConfig.params.file_id, "78");
         assert.equal(capturedConfig.headers.Authorization, "Bearer key123");
     } finally {
         torboxApi.get = origGet;
@@ -4491,4 +4492,190 @@ test("Helpers - formatAioStream badges et provenance Torrentio", () => {
     });
     assert.ok(notInstant.name.includes("[AD 🔍 Torrentio]"), "Badge recherche Torrentio");
     assert.ok(notInstant.title.includes("🔍 Torrentio (12 seeders)"), "Statut de vérification au clic");
+});
+
+test("Torbox - 422 requestdl : le détail est remonté et la cible mise en quarantaine", async () => {
+    const { getTorboxStreamUrl, torboxApi, extractTorboxError } = require("../lib/torbox");
+    const origGet = torboxApi.get;
+    const origWarn = console.warn;
+    const warnings = [];
+    console.warn = (...args) => warnings.push(args.join(" "));
+
+    let calls = 0;
+    try {
+        torboxApi.get = async () => {
+            calls++;
+            const err = new Error("Request failed with status code 422");
+            err.response = {
+                status: 422,
+                data: { detail: [{ type: "missing", loc: ["query", "token"], msg: "Field required" }] }
+            };
+            throw err;
+        };
+
+        const r1 = await getTorboxStreamUrl(999001, 1, "tb_key");
+        assert.equal(r1, null, "Un 422 doit retourner null");
+        assert.ok(
+            warnings.some(w => w.includes("HTTP 422")),
+            "Le code HTTP doit apparaître dans le log"
+        );
+        assert.ok(
+            warnings.some(w => w.includes("Field required")),
+            "Le détail FastAPI doit être extrait (et non seulement err.message)"
+        );
+
+        // 2e appel identique : quarantaine -> aucun nouvel appel API (anti-boucle)
+        const r2 = await getTorboxStreamUrl(999001, 1, "tb_key");
+        assert.equal(r2, null);
+        assert.equal(calls, 1, "Une cible 422 doit être mise en quarantaine");
+
+        // Une cible différente n'est pas bloquée par la quarantaine
+        await getTorboxStreamUrl(999002, 2, "tb_key");
+        assert.equal(calls, 2, "Une cible différente doit être retentée");
+
+        // extractTorboxError gère les deux formes du champ detail
+        assert.equal(extractTorboxError({ response: { data: { detail: "Bad token" } } }), "Bad token");
+        assert.equal(extractTorboxError({ message: "boom" }), "boom");
+        assert.equal(
+            extractTorboxError({ response: { data: { error: "BAD_TOKEN", detail: "invalid" } } }),
+            "invalid"
+        );
+    } finally {
+        torboxApi.get = origGet;
+        console.warn = origWarn;
+    }
+});
+
+test("Torbox - une URL CDN contenant la clé API est refusée (anti-fuite)", async () => {
+    const { getTorboxStreamUrl, torboxApi } = require("../lib/torbox");
+    const origGet = torboxApi.get;
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+        torboxApi.get = async () => ({
+            status: 200,
+            data: { success: true, data: "https://cdn.torbox.app/x?token=leaked_key" }
+        });
+        const r = await getTorboxStreamUrl(999003, 3, "leaked_key");
+        assert.equal(r, null, "Une URL CDN contenant la clé doit être refusée");
+    } finally {
+        torboxApi.get = origGet;
+        console.warn = origWarn;
+    }
+});
+
+test("Torbox - isTorboxTorrentReady écarte les torrents non téléchargés", () => {
+    const { isTorboxTorrentReady, isTorboxTorrentDownloaded } = require("../lib/torbox");
+
+    assert.equal(isTorboxTorrentReady(null), false);
+    assert.equal(isTorboxTorrentReady({ download_state: "downloading" }), false);
+    assert.equal(isTorboxTorrentReady({ download_state: "stalled" }), false);
+    assert.equal(isTorboxTorrentReady({ download_state: "paused" }), false);
+    assert.equal(isTorboxTorrentReady({ download_state: "completed" }), true);
+    assert.equal(isTorboxTorrentReady({ download_state: "cached" }), true);
+    assert.equal(isTorboxTorrentReady({}), true, "Un état inconnu ne doit pas masquer un fichier lisible");
+
+    // Preuve positive (utilisée par le resolver) : sémantique historique conservée
+    assert.equal(isTorboxTorrentDownloaded({ download_state: "downloading" }), false);
+    assert.equal(isTorboxTorrentDownloaded({}), false);
+    assert.equal(isTorboxTorrentDownloaded({ download_finished: true }), true);
+    assert.equal(isTorboxTorrentDownloaded({ progress: 1 }), true);
+    assert.equal(isTorboxTorrentDownloaded({ download_state: "completed" }), true);
+});
+
+test("Torbox - les torrents cloud non téléchargés ne produisent aucun flux", async () => {
+    const torbox = require("../lib/torbox");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+    const { handleStream } = require("../lib/stremio");
+
+    const origList = torbox.getTorboxTorrentList;
+    const origInstant = torbox.checkInstantTorbox;
+    const origAdGet = alldebrid.adGet;
+    const origPreValidate = alldebrid.preValidateMagnets;
+    const origGet = axios.get;
+
+    const downloading = {
+        id: 555001,
+        name: "Scrubs S01E04 MULTI VFF 1080p WEB",
+        hash: "d".repeat(40),
+        size: 1000000000,
+        download_state: "downloading",
+        files: [{ id: 11, name: "Scrubs.S01E04.mkv" }]
+    };
+    const completed = {
+        id: 555002,
+        name: "Scrubs S01E04 MULTI VFF 1080p WEB",
+        hash: "e".repeat(40),
+        size: 1000000000,
+        download_state: "completed",
+        files: [{ id: 22, name: "Scrubs.S01E04.mkv" }]
+    };
+
+    torbox.getTorboxTorrentList = async () => [downloading, completed];
+    torbox.checkInstantTorbox = async () => ({});
+    alldebrid.adGet = async () => ({ data: { status: "error" } });
+    alldebrid.preValidateMagnets = async () => ({});
+    axios.get = async () => ({ data: {} });
+
+    try {
+        const config = {
+            torboxApiKey: "dummy_tb_key",
+            debridProvider: "torbox",
+            prowlarrKey: "off"
+        };
+        const mockCache = { movies: {}, series: { tt0285403: { groupTitle: "scrubs", episodes: [] } } };
+
+        const result = await handleStream(
+            config,
+            "series",
+            "tt0285403:1:4",
+            mockCache,
+            "http://localhost:3000",
+            "test-user"
+        );
+
+        const tbCloudUrls = (result.streams || [])
+            .map(s => String(s.url || ""))
+            .filter(u => u.includes("tb_cloud:"));
+
+        assert.ok(tbCloudUrls.length > 0, "Le torrent terminé doit produire un flux cloud");
+        assert.ok(
+            !tbCloudUrls.some(u => u.includes("555001")),
+            "Un torrent en cours de téléchargement ne doit produire aucun flux cloud"
+        );
+        assert.ok(
+            tbCloudUrls.some(u => u.includes("tb_cloud:555002:22")),
+            "Le fichier du torrent terminé doit être exposé"
+        );
+    } finally {
+        torbox.getTorboxTorrentList = origList;
+        torbox.checkInstantTorbox = origInstant;
+        alldebrid.adGet = origAdGet;
+        alldebrid.preValidateMagnets = origPreValidate;
+        axios.get = origGet;
+    }
+});
+
+test("UI Admin - le filtre de type de log fonctionne même en pause", () => {
+    const { renderAdminPage } = require("../lib/ui");
+    const html = renderAdminPage();
+
+    assert.ok(
+        html.includes("async function loadLogs(force = false)"),
+        "loadLogs doit accepter un paramètre force"
+    );
+    assert.ok(html.includes("if (isLogsPaused && !force) return;"), "La pause ne doit bloquer que l'auto-refresh");
+    assert.ok(
+        html.includes('id="logLevelFilter" onchange="loadLogs(true)"'),
+        "Le filtre de type de log doit forcer le rafraîchissement"
+    );
+    assert.ok(
+        html.includes('onclick="loadLogs(true)"'),
+        "Le bouton Actualiser doit forcer le rafraîchissement"
+    );
+    assert.ok(
+        html.includes("if (adminToken && !isLogsPaused) loadLogs();"),
+        "L'auto-refresh doit rester suspendu en pause"
+    );
 });
