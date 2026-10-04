@@ -4053,9 +4053,17 @@ test("API Torrentio - /api/check/torrentio valide le manifest et bloque les cibl
     const port = server.address().port;
     const base = `http://127.0.0.1:${port}`;
 
+    let blocked = false;
+    const forbidden = () => {
+        const err = new Error("Forbidden");
+        err.response = { status: 403 };
+        return err;
+    };
+
     axios.get = async url => {
         const u = typeof url === "string" ? url : "";
         if (u.includes("torrentio.strem.fun")) {
+            if (blocked) throw forbidden();
             return {
                 status: 200,
                 data: {
@@ -4089,9 +4097,68 @@ test("API Torrentio - /api/check/torrentio valide le manifest et bloque les cibl
         // 3. URL vide
         const empty = await axios.post(`${base}/api/check/torrentio`, { torrentioUrl: "" });
         assert.equal(empty.data.valid, false, "Une URL vide doit être refusée");
+
+        // 4. Blocage Cloudflare (403) → message explicite mentionnant WARP
+        blocked = true;
+        const denied = await axios.post(`${base}/api/check/torrentio`, {
+            torrentioUrl: "https://torrentio.strem.fun/sort=size%7Clanguage=french/manifest.json"
+        });
+        assert.equal(denied.status, 200);
+        assert.equal(denied.data.valid, false, "Un 403 doit invalider le test");
+        assert.ok(/403/.test(String(denied.data.error)), "Le message doit mentionner le 403 Cloudflare");
+        assert.ok(/WARP/i.test(String(denied.data.error)), "Le message doit mentionner le proxy WARP");
     } finally {
         axios.get = originalGet;
         server.close();
+    }
+});
+
+test("Proxy - fetchWithWarpFallback bascule proxy ↔ direct", async () => {
+    const { fetchWithWarpFallback } = require("../lib/alldebrid");
+    const axios = require("axios");
+    const originalGet = axios.get;
+
+    const forbidden = () => {
+        const err = new Error("Forbidden");
+        err.response = { status: 403 };
+        return err;
+    };
+
+    try {
+        // 1. Sans proxy : un seul appel direct
+        let calls = [];
+        axios.get = async (url, opts) => {
+            calls.push(opts && opts.httpAgent ? "proxy" : "direct");
+            return { status: 200, data: { ok: true } };
+        };
+        const r1 = await fetchWithWarpFallback("https://exemple.test/manifest.json", { timeout: 1000 }, null);
+        assert.equal(r1.status, 200);
+        assert.deepEqual(calls, ["direct"], "Sans proxy, un seul appel direct est effectué");
+
+        // 2. Proxy configuré + erreur 403 → repli automatique en direct
+        calls = [];
+        axios.get = async (url, opts) => {
+            const via = opts && opts.httpAgent ? "proxy" : "direct";
+            calls.push(via);
+            if (via === "proxy") throw forbidden();
+            return { status: 200, data: { ok: true } };
+        };
+        const fakeAgent = { fake: true };
+        const r2 = await fetchWithWarpFallback("https://exemple.test/manifest.json", { timeout: 1000 }, fakeAgent);
+        assert.equal(r2.status, 200);
+        assert.deepEqual(calls, ["proxy", "direct"], "Un 403 via proxy doit déclencher un repli direct");
+
+        // 3. Les deux chemins échouent → l'erreur remonte
+        axios.get = async () => {
+            throw forbidden();
+        };
+        await assert.rejects(
+            () => fetchWithWarpFallback("https://exemple.test/manifest.json", { timeout: 1000 }, fakeAgent),
+            /Forbidden/,
+            "Doit lever si le proxy ET le direct échouent"
+        );
+    } finally {
+        axios.get = originalGet;
     }
 });
 

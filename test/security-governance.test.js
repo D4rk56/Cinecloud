@@ -36,6 +36,35 @@ test("Task 1 - .env.example complet et validation au boot (fail-fast)", () => {
     assert.ok(content.includes("TMDB_API_KEY="), ".env.example doit documenter TMDB_API_KEY");
     assert.ok(content.includes("CORS_ALLOWED_ORIGINS="), ".env.example doit documenter CORS_ALLOWED_ORIGINS");
 
+    // 1bis. Workflow CI : actions compatibles Node 24 (évite « Node.js 20 is deprecated »)
+    const workflowPath = path.join(__dirname, "..", ".github", "workflows", "docker-publish.yml");
+    assert.ok(fs.existsSync(workflowPath), "Le workflow CI docker-publish.yml doit exister");
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const deprecatedActions = [
+        "actions/checkout@v4",
+        "actions/setup-node@v4",
+        "docker/setup-qemu-action@v3",
+        "docker/setup-buildx-action@v3",
+        "docker/login-action@v3",
+        "docker/metadata-action@v5",
+        "docker/build-push-action@v6"
+    ];
+    for (const deprecated of deprecatedActions) {
+        assert.ok(!workflow.includes(deprecated), `Le workflow ne doit plus utiliser ${deprecated} (runtime Node 20)`);
+    }
+    const expectedActions = [
+        "actions/checkout@v7",
+        "actions/setup-node@v7",
+        "docker/setup-qemu-action@v4",
+        "docker/setup-buildx-action@v4",
+        "docker/login-action@v4",
+        "docker/metadata-action@v6",
+        "docker/build-push-action@v7"
+    ];
+    for (const expected of expectedActions) {
+        assert.ok(workflow.includes(expected), `Le workflow doit utiliser ${expected}`);
+    }
+
     // 2. Validation au boot : cas valides via validateEnv et envSchema
     const validConfig = validateEnv({
         PORT: "3000",

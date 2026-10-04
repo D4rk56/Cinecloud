@@ -31,6 +31,7 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
 - **Synchronisation RSS d'arrière-plan** : Alimentation continue des dernières sorties films et séries.
 - **Recherche à la demande (On-Demand)** : Interrogation instantanée de votre Prowlarr lorsqu'un contenu n'est pas encore en cache.
 - **Intégration Lumio** : Option pour enrichir les flux instantanés à la demande via votre manifest perso Lumio.
+- **Intégration Torrentio** : Collez l'URL de manifest Torrentio **contenant vos filtres** (Taille, Seed, Langue, Résolutions) ; l'addon récupère les torrents en cache et lit avec **votre propre clé AllDebrid/Torbox** (le débridage doit rester désactivé côté Torrentio). Cloudflare renvoyant un **403** aux IP de serveur, le proxy **WARP** est utilisé automatiquement (repli direct), et une instance Torrentio **auto-hébergée** est également acceptée.
 
 ### 🇯🇵 Module Spécialisé Animés (Anitomy & Mapping Fribb)
 

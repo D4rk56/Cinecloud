@@ -98,7 +98,7 @@ const { handleResolve } = require("./lib/resolver");
 const { startProwlarrWorker, stopProwlarrWorker } = require("./lib/prowlarr-worker");
 const { ALL_CATALOGS, checkTmdbKey } = require("./lib/helpers");
 const alldebrid = require("./lib/alldebrid");
-const { getWarpStatus, checkAllDebridKey } = alldebrid;
+const { getWarpStatus, checkAllDebridKey, fetchWithWarpFallback } = alldebrid;
 const { LOGO_SVG, BACKGROUND_SVG, renderConfigPage, renderAdminPage } = require("./lib/ui");
 const { loadAnimeMapping } = require("./lib/animeMapping");
 const { assertSafeSelfHostedUrl, isForbiddenTargetUrl } = require("./lib/net-guard");
@@ -734,10 +734,12 @@ app.post("/api/check/torrentio", apiCheckLimiter, async (req, res) => {
     }
 
     try {
-        const resp = await axios.get(raw, {
+        // Repli proxy ↔ direct : Cloudflare bloque les IP datacenter (403) ; WARP est utilisé s'il est configuré.
+        const resp = await fetchWithWarpFallback(raw, {
             headers: {
                 "User-Agent": BROWSER_UA,
-                Accept: "application/json"
+                Accept: "application/json",
+                "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8"
             },
             timeout: 5000
         });
@@ -759,19 +761,28 @@ app.post("/api/check/torrentio", apiCheckLimiter, async (req, res) => {
             error: "Réponse reçue mais le manifest Stremio est invalide (id ou ressource 'stream' manquante)"
         });
     } catch (err) {
-        if (err.response && err.response.status === 404) {
+        const status = err.response && err.response.status;
+        if (status === 404) {
             return res.json({
                 success: false,
                 valid: false,
                 error: "Manifest introuvable (HTTP 404). Vérifiez l'URL de votre manifest Torrentio."
             });
         }
+        if (status === 403) {
+            return res.json({
+                success: false,
+                valid: false,
+                error:
+                    "Torrentio a refusé la requête (403 Cloudflare) : l'IP de votre serveur est probablement bloquée. " +
+                    "Le proxy WARP est utilisé automatiquement s'il est configuré (WARP_PROXY) — vérifiez que le conteneur 'warp' est démarré. " +
+                    "Sinon, hébergez votre propre instance Torrentio et collez son URL ici."
+            });
+        }
         return res.json({
             success: false,
             valid: false,
-            error: err.response
-                ? `Erreur HTTP ${err.response.status} de Torrentio`
-                : err.message || "Impossible de joindre Torrentio"
+            error: status ? `Erreur HTTP ${status} de Torrentio` : err.message || "Impossible de joindre Torrentio"
         });
     }
 });
