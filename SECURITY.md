@@ -87,6 +87,33 @@ CinéCloud FR est conçu selon le principe de **défense en profondeur** (_defen
   l'API le sont), et l'URL CDN retournée est **rejetée** si elle contient la clé, garantissant que le
   client ne reçoit qu'une URL signée sans secret.
 
+### I. Personnalisation de la page publique (embed admin) — anti-XSS
+
+- L'administrateur peut publier un bloc de contenu sous le titre de la page d'accueil
+  (`embedHtml`) ainsi qu'une iframe et un bouton Discord. Ce contenu étant affiché à **tous les
+  visiteurs**, il est traité comme une entrée non fiable.
+- `lib/sanitize.js` applique un assainissement **par reconstruction** : la chaîne fournie n'est
+  **jamais réémise** telle quelle. Elle est tokenisée, filtrée par une **liste blanche close**, puis
+  reconstruite — tout texte étant échappé.
+  - Balises autorisées uniquement : `p, div, span, br, hr, strong, b, em, i, u, s, small, ul, ol, li,
+    blockquote, code, pre, h1…h6, figure, figcaption, table, thead, tbody, tr, td, th, a, img`.
+    **Aucun** `script`, `iframe`, `object`, `embed`, `form`, `style`, `link`, `meta`, `base`, `svg`.
+  - Attributs autorisés uniquement : `href`, `title` (liens) et `src`, `alt`, `title`, `width`,
+    `height`, `loading` (images). **Aucun** `on*`, `style`, `class`, `id`, `srcset`.
+  - Les URL sont validées **après décodage des références de caractères et suppression des caractères
+    ignorés** (`&#106;avascript:`, `java&#9;script:`, casse mixte, attributs sans guillemets), afin
+    qu'aucun schéma `javascript:` ou `data:` ne passe.
+  - Les liens sortants sont forcés en `target="_blank" rel="noopener noreferrer nofollow"` et la
+    sortie est **équilibrée** (aucune balise laissée ouverte).
+- L'iframe éventuelle est **HTTPS uniquement** et rendue avec
+  `sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"` +
+  `referrerpolicy="no-referrer"` : origine isolée, pas d'accès au DOM parent ni aux cookies.
+- Le bouton Discord n'accepte que les hôtes `discord.gg` / `discord.com` en HTTPS : le champ ne peut
+  pas être détourné en redirection vers un site tiers.
+- Le champ est borné (4000 caractères pour le HTML, 500 pour l'iframe, 200 pour Discord) et validé par
+  Zod ; l'assainissement est appliqué **à l'enregistrement** (API admin) **et au rendu** (défense en
+  profondeur, y compris pour une valeur écrite par un autre chemin).
+
 ---
 
 ## 3. Signalement Responsable de Vulnérabilité

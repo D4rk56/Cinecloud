@@ -102,6 +102,7 @@ const { getWarpStatus, checkAllDebridKey, fetchWithWarpFallback } = alldebrid;
 const { LOGO_SVG, BACKGROUND_SVG, renderConfigPage, renderAdminPage } = require("./lib/ui");
 const { loadAnimeMapping } = require("./lib/animeMapping");
 const { assertSafeSelfHostedUrl, isForbiddenTargetUrl } = require("./lib/net-guard");
+const { normalizeSiteSettings } = require("./lib/sanitize");
 
 // Initialisation et indexation mémoire de la table communautaire Fribb anime-lists au boot
 loadAnimeMapping().catch(err => console.warn("[Server] AnimeMapping non disponible :", err.message));
@@ -734,15 +735,21 @@ app.post("/api/check/torrentio", apiCheckLimiter, async (req, res) => {
     }
 
     try {
-        // Repli proxy ↔ direct : Cloudflare bloque les IP datacenter (403) ; WARP est utilisé s'il est configuré.
-        const resp = await fetchWithWarpFallback(raw, {
-            headers: {
-                "User-Agent": BROWSER_UA,
-                Accept: "application/json",
-                "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8"
+        // Repli proxy ↔ direct : Cloudflare bloque les IP datacenter (403). L'ordre des tentatives
+        // est réglable depuis l'admin (« direct » essaie l'IP du serveur en premier).
+        const resp = await fetchWithWarpFallback(
+            raw,
+            {
+                headers: {
+                    "User-Agent": BROWSER_UA,
+                    Accept: "application/json",
+                    "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8"
+                },
+                timeout: 5000
             },
-            timeout: 5000
-        });
+            undefined,
+            getSystemSettings().torrentioEgress || "auto"
+        );
 
         const resources = resp.data && Array.isArray(resp.data.resources) ? resp.data.resources : [];
         const hasStreamResource = resources.some(r => r && r.name === "stream");
@@ -769,20 +776,23 @@ app.post("/api/check/torrentio", apiCheckLimiter, async (req, res) => {
                 error: "Manifest introuvable (HTTP 404). Vérifiez l'URL de votre manifest Torrentio."
             });
         }
+        const attempts = err.attemptsSummary ? ` (tentatives : ${err.attemptsSummary})` : "";
         if (status === 403) {
             return res.json({
                 success: false,
                 valid: false,
                 error:
-                    "Torrentio a refusé la requête (403 Cloudflare) : l'IP de votre serveur est probablement bloquée. " +
-                    "Le proxy WARP est utilisé automatiquement s'il est configuré (WARP_PROXY) — vérifiez que le conteneur 'warp' est démarré. " +
-                    "Sinon, hébergez votre propre instance Torrentio et collez son URL ici."
+                    `Torrentio a refusé la requête (403 Cloudflare)${attempts} : les IP utilisées sont bloquées. ` +
+                    "Essayez « Direct d'abord » dans Admin → Paramètres, un proxy dédié via TORRENTIO_PROXY, " +
+                    "ou hébergez votre propre instance Torrentio et collez son URL ici."
             });
         }
         return res.json({
             success: false,
             valid: false,
-            error: status ? `Erreur HTTP ${status} de Torrentio` : err.message || "Impossible de joindre Torrentio"
+            error: status
+                ? `Erreur HTTP ${status} de Torrentio${attempts}`
+                : `${err.message || "Impossible de joindre Torrentio"}${attempts}`
         });
     }
 });
@@ -933,7 +943,8 @@ app.get("/api/admin/settings", requireAdmin, (req, res) => {
 });
 
 app.post("/api/admin/settings", requireAdmin, validateAdmin({ body: settingsSchema }), (req, res) => {
-    const updated = updateSystemSettings(req.body);
+    // Assainissement du contenu personnalisé avant persistance (HTML, URL d'iframe, URL Discord).
+    const updated = updateSystemSettings(normalizeSiteSettings(req.body));
     res.json({ success: true, settings: updated });
 });
 

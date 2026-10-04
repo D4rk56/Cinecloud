@@ -4099,15 +4099,21 @@ test("API Torrentio - /api/check/torrentio valide le manifest et bloque les cibl
         const empty = await axios.post(`${base}/api/check/torrentio`, { torrentioUrl: "" });
         assert.equal(empty.data.valid, false, "Une URL vide doit être refusée");
 
-        // 4. Blocage Cloudflare (403) → message explicite mentionnant WARP
+        // 4. Blocage Cloudflare (403) → message explicite + diagnostic des tentatives
         blocked = true;
         const denied = await axios.post(`${base}/api/check/torrentio`, {
             torrentioUrl: "https://torrentio.strem.fun/sort=size%7Clanguage=french/manifest.json"
         });
         assert.equal(denied.status, 200);
         assert.equal(denied.data.valid, false, "Un 403 doit invalider le test");
-        assert.ok(/403/.test(String(denied.data.error)), "Le message doit mentionner le 403 Cloudflare");
-        assert.ok(/WARP/i.test(String(denied.data.error)), "Le message doit mentionner le proxy WARP");
+        const denyMsg = String(denied.data.error);
+        assert.ok(/403/.test(denyMsg), "Le message doit mentionner le 403 Cloudflare");
+        assert.ok(denyMsg.includes("tentatives :"), "Le message doit rapporter chaque tentative réseau");
+        assert.ok(denyMsg.includes("direct:"), "La tentative directe doit apparaître dans le diagnostic");
+        assert.ok(
+            denyMsg.includes("TORRENTIO_PROXY"),
+            "Le message doit indiquer la solution (proxy dédié ou instance auto-hébergée)"
+        );
     } finally {
         axios.get = originalGet;
         server.close();
@@ -4161,6 +4167,94 @@ test("Proxy - fetchWithWarpFallback bascule proxy ↔ direct", async () => {
     } finally {
         axios.get = originalGet;
     }
+});
+
+test("Proxy - ordre des tentatives pilotable et diagnostic des échecs", async () => {
+    const { fetchWithWarpFallback } = require("../lib/alldebrid");
+    const axios = require("axios");
+    const originalGet = axios.get;
+    const originalWarn = console.warn;
+    console.warn = () => {};
+
+    const fakeAgent = { fake: true };
+    try {
+        // 1. prefer="direct" → l'IP du serveur est tentée en premier
+        let order = [];
+        axios.get = async (url, opts) => {
+            order.push(opts && opts.httpAgent ? "proxy" : "direct");
+            return { status: 200, data: {} };
+        };
+        await fetchWithWarpFallback("https://exemple.test/x", {}, fakeAgent, "direct");
+        assert.deepEqual(order, ["direct"], "prefer=direct doit essayer l'IP du serveur en premier");
+
+        // 2. prefer="auto" (défaut) → le proxy d'abord
+        order = [];
+        await fetchWithWarpFallback("https://exemple.test/x", {}, fakeAgent, "auto");
+        assert.deepEqual(order, ["proxy"], "prefer=auto doit essayer le proxy en premier");
+
+        // 3. Échec des deux → le résumé des tentatives est attaché à l'erreur
+        axios.get = async () => {
+            const err = new Error("Forbidden");
+            err.response = { status: 403 };
+            throw err;
+        };
+        let captured = null;
+        try {
+            await fetchWithWarpFallback("https://exemple.test/x", {}, fakeAgent, "auto");
+        } catch (err) {
+            captured = err;
+        }
+        assert.ok(captured, "Doit lever si les deux chemins échouent");
+        assert.deepEqual(captured.attempts, ["proxy:403", "direct:403"], "Chaque tentative doit être rapportée");
+        assert.equal(captured.attemptsSummary, "proxy:403 • direct:403", "Résumé lisible pour les logs/UI");
+    } finally {
+        axios.get = originalGet;
+        console.warn = originalWarn;
+    }
+});
+
+test("UI - embed sous le titre assaini et bouton Discord conditionnel", () => {
+    const { renderConfigPage } = require("../lib/ui");
+
+    // 1. Sans configuration : aucun bloc affiché
+    const plain = renderConfigPage("register", "", {});
+    assert.ok(!plain.includes('class="site-embed"'), "Aucun bloc embed sans configuration");
+
+    // 2. HTML dangereux + URL invalides + Discord valide
+    const html = renderConfigPage("register", "", {
+        embedHtml: '<p>Hello</p><script>alert(1)</script><img src=x onerror=alert(2)>',
+        embedIframeUrl: "javascript:alert(1)",
+        discordUrl: "https://discord.gg/abc"
+    });
+    const start = html.indexOf('<div class="site-embed">');
+    assert.ok(start !== -1, "Le bloc embed doit être présent");
+    const end = html.indexOf('class="main-mode-tabs"', start);
+    const block = html.slice(start, end);
+
+    assert.ok(block.includes("<p>Hello</p>"), "Le contenu légitime est conservé");
+    assert.ok(!/<script/i.test(block), "Aucun script injecté dans le bloc");
+    assert.ok(!/onerror/i.test(block), "Aucun gestionnaire d'événement injecté");
+    assert.ok(!/javascript:/i.test(block), "Aucun schéma javascript: injecté");
+    assert.ok(!block.includes("<iframe"), "Iframe non HTTPS refusée");
+    assert.ok(block.includes('href="https://discord.gg/abc"'), "Bouton Discord présent si l'URL est valide");
+    assert.ok(block.includes('rel="noopener noreferrer"'), "Lien Discord durci");
+
+    // 3. Hôte Discord non autorisé : pas de bouton
+    const noDiscord = renderConfigPage("register", "", { discordUrl: "https://evil.tld/discord" });
+    assert.ok(!noDiscord.includes("Rejoindre le Discord"), "Hôte Discord invalide refusé");
+
+    // 4. Iframe HTTPS valide : rendue dans un bac à sable, à la hauteur demandée
+    const withFrame = renderConfigPage("register", "", {
+        embedIframeUrl: "https://player.tld/embed",
+        embedIframeHeight: 400
+    });
+    assert.ok(withFrame.includes('src="https://player.tld/embed"'), "Iframe HTTPS rendue");
+    assert.ok(
+        withFrame.includes('sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"'),
+        "Iframe isolée par sandbox"
+    );
+    assert.ok(withFrame.includes('height="400"'), "Hauteur appliquée");
+    assert.ok(withFrame.includes('loading="lazy"'), "Chargement différé");
 });
 
 test("Security - Rate Limiting on /api/check endpoints (apiCheckLimiter)", async () => {
@@ -4677,5 +4771,20 @@ test("UI Admin - le filtre de type de log fonctionne même en pause", () => {
     assert.ok(
         html.includes("if (adminToken && !isLogsPaused) loadLogs();"),
         "L'auto-refresh doit rester suspendu en pause"
+    );
+
+    // Personnalisation de la page publique (embed + Discord + egress Torrentio)
+    assert.ok(html.includes('id="settingEmbedHtml"'), "Champ embed HTML présent");
+    assert.ok(html.includes('id="settingEmbedIframeUrl"'), "Champ URL iframe présent");
+    assert.ok(html.includes('id="settingEmbedIframeHeight"'), "Champ hauteur iframe présent");
+    assert.ok(html.includes('id="settingDiscordUrl"'), "Champ URL Discord présent");
+    assert.ok(html.includes('id="settingTorrentioEgress"'), "Sélecteur d'egress Torrentio présent");
+    assert.ok(
+        html.includes("data.embedHtml") && html.includes("data.discordUrl") && html.includes("data.torrentioEgress"),
+        "loadSettings doit charger les nouveaux réglages"
+    );
+    assert.ok(
+        html.includes("embedHtml, embedIframeUrl, embedIframeHeight, discordUrl, torrentioEgress"),
+        "saveSettings doit transmettre les nouveaux réglages"
     );
 });

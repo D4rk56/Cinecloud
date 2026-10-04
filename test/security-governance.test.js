@@ -17,6 +17,12 @@ const {
     cacheClearSchema,
     cleanupMagnetsSchema
 } = require("../lib/admin-schemas");
+const {
+    sanitizeEmbedHtml,
+    isSafeEmbedUrl,
+    isSafeDiscordUrl,
+    normalizeSiteSettings
+} = require("../lib/sanitize");
 
 test("Task 1 - .env.example complet et validation au boot (fail-fast)", () => {
     // 1. Présence et complétude de .env.example
@@ -358,4 +364,145 @@ test("Task 5 - Validation robuste des entrées sur les routes admin (/api/admin/
     } finally {
         server.close();
     }
+});
+
+test("Assainissement - batterie XSS sur l'embed administrateur", () => {
+    const payloads = [
+        "<script>alert(1)</script>",
+        '<script src="https://evil.tld/x.js"></script>',
+        "<img src=x onerror=alert(1)>",
+        '<a href="javascript:alert(1)">clic</a>',
+        '<a href="&#106;avascript:alert(1)">clic</a>',
+        '<a href="java&#9;script:alert(1)">clic</a>',
+        '<a href="jav&#x0A;ascript:alert(1)">clic</a>',
+        "<a href=&#106;avascript:alert(1)>clic</a>",
+        '<a href="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==">clic</a>',
+        "<svg onload=alert(1)>",
+        '<iframe src="https://evil.tld"></iframe>',
+        '<object data="x"></object>',
+        '<embed src="x">',
+        '<form action="https://evil.tld"><input name="a"></form>',
+        '<div style="background:url(javascript:alert(1))">x</div>',
+        '<div onclick="alert(1)">x</div>',
+        '<a href="https://ok.tld" onclick="alert(1)">x</a>',
+        "<ScRiPt>alert(1)</ScRiPt>",
+        "<img src=javascript:alert(1)>",
+        '<b onmouseover="alert(1)">x</b>',
+        '<a href="https://ok.tld" style="x:expression(alert(1))">x</a>',
+        "<div><b>non ferme",
+        '<p title="&quot;><script>alert(1)</script>">x</p>',
+        '<link rel="stylesheet" href="https://evil.tld/x.css">',
+        '<meta http-equiv="refresh" content="0;url=https://evil.tld">',
+        '<base href="https://evil.tld/">'
+    ];
+
+    for (const payload of payloads) {
+        const out = sanitizeEmbedHtml(payload);
+        assert.ok(
+            !/<(script|svg|iframe|object|embed|form|input|link|meta|base|style)\b/i.test(out),
+            `Balise dangereuse conservée pour ${payload} → ${out}`
+        );
+        assert.ok(!/\son[a-z]+\s*=/i.test(out), `Gestionnaire d'événement conservé pour ${payload} → ${out}`);
+        assert.ok(!/javascript\s*:/i.test(out), `Schéma javascript conservé pour ${payload} → ${out}`);
+        assert.ok(!/style\s*=/i.test(out), `Attribut style conservé pour ${payload} → ${out}`);
+    }
+
+    // Cas particuliers : la balise est retirée mais le texte reste (échappé, inoffensif)
+    assert.equal(sanitizeEmbedHtml("<script>alert(1)</script>"), "alert(1)");
+    assert.equal(sanitizeEmbedHtml("<img src=javascript:alert(1)>"), '<img loading="lazy">');
+    // Sortie équilibrée : balise laissée ouverte refermée
+    assert.equal(sanitizeEmbedHtml("<div><b>texte"), "<div><b>texte</b></div>");
+    // Commentaires et doctype jetés
+    assert.equal(sanitizeEmbedHtml("a<!-- <script>x</script> -->b"), "ab");
+    // Entrée non textuelle
+    assert.equal(sanitizeEmbedHtml(null), "");
+    assert.equal(sanitizeEmbedHtml(undefined), "");
+    // Troncature
+    assert.ok(sanitizeEmbedHtml("a".repeat(5000)).length <= 4000);
+});
+
+test("Assainissement - le contenu légitime est préservé", () => {
+    const safe = sanitizeEmbedHtml(
+        '<p>Bonjour <strong>monde</strong> <a href="https://exemple.tld" title="ok">lien</a><br>' +
+            '<img src="https://exemple.tld/a.png" alt="image" width="120"><ul><li>un</li></ul></p>'
+    );
+    assert.ok(safe.includes("<strong>monde</strong>"), "strong conservé");
+    assert.ok(safe.includes('href="https://exemple.tld"'), "lien https conservé");
+    assert.ok(safe.includes('target="_blank"') && safe.includes('rel="noopener noreferrer nofollow"'), "lien durci");
+    assert.ok(safe.includes('src="https://exemple.tld/a.png"'), "image https conservée");
+    assert.ok(safe.includes('alt="image"') && safe.includes('loading="lazy"'), "attributs image conservés");
+    assert.ok(safe.includes("<br>"), "br conservé");
+    assert.ok(safe.includes("<ul><li>un</li></ul>"), "liste conservée");
+    // Les balises interdites disparaissent mais le texte reste
+    assert.equal(sanitizeEmbedHtml("<marquee>texte</marquee>"), "texte");
+    // Le texte brut est échappé
+    assert.equal(sanitizeEmbedHtml("1 < 2 & 3 > 2"), "1 &lt; 2 &amp; 3 &gt; 2");
+});
+
+test("Assainissement - validation des URL d'embed et du bouton Discord", () => {
+    // Iframe : HTTPS uniquement
+    assert.equal(isSafeEmbedUrl("https://www.youtube.com/embed/abc"), true);
+    assert.equal(isSafeEmbedUrl("http://www.youtube.com/embed/abc"), false);
+    assert.equal(isSafeEmbedUrl("javascript:alert(1)"), false);
+    assert.equal(isSafeEmbedUrl("data:text/html,<script>1</script>"), false);
+    assert.equal(isSafeEmbedUrl("file:///etc/passwd"), false);
+    assert.equal(isSafeEmbedUrl(""), false);
+    assert.equal(isSafeEmbedUrl("https://" + "a".repeat(600)), false);
+
+    // Discord : HTTPS + hôte Discord uniquement
+    assert.equal(isSafeDiscordUrl("https://discord.gg/abc"), true);
+    assert.equal(isSafeDiscordUrl("https://discord.com/invite/abc"), true);
+    assert.equal(isSafeDiscordUrl("https://discord.gg.evil.tld/abc"), false);
+    assert.equal(isSafeDiscordUrl("https://evil.tld/discord.gg"), false);
+    assert.equal(isSafeDiscordUrl("http://discord.gg/abc"), false);
+    assert.equal(isSafeDiscordUrl("javascript:alert(1)"), false);
+    assert.equal(isSafeDiscordUrl(""), false);
+});
+
+test("Assainissement - normalizeSiteSettings neutralise les valeurs invalides", () => {
+    const normalized = normalizeSiteSettings({
+        embedHtml: '<p>ok</p><script>alert(1)</script>',
+        embedIframeUrl: "javascript:alert(1)",
+        embedIframeHeight: 99999,
+        discordUrl: "https://evil.tld/x",
+        httpTimeoutMs: 12000
+    });
+
+    assert.equal(normalized.embedHtml, "<p>ok</p>alert(1)");
+    assert.equal(normalized.embedIframeUrl, "", "iframe non HTTPS vidée");
+    assert.equal(normalized.embedIframeHeight, 1200, "hauteur bornée");
+    assert.equal(normalized.discordUrl, "", "hôte Discord invalide vidé");
+    assert.equal(normalized.httpTimeoutMs, 12000, "les autres réglages sont intacts");
+
+    const ok = normalizeSiteSettings({
+        embedIframeUrl: "https://player.tld/embed",
+        embedIframeHeight: 400,
+        discordUrl: "https://discord.gg/abc"
+    });
+    assert.equal(ok.embedIframeUrl, "https://player.tld/embed");
+    assert.equal(ok.embedIframeHeight, 400);
+    assert.equal(ok.discordUrl, "https://discord.gg/abc");
+});
+
+test("Assainissement - le schéma des paramètres borne la personnalisation", () => {
+    const valid = settingsSchema.safeParse({
+        embedHtml: "<p>ok</p>",
+        embedIframeUrl: "https://player.tld/embed",
+        embedIframeHeight: 400,
+        discordUrl: "https://discord.gg/abc",
+        torrentioEgress: "direct"
+    });
+    assert.equal(valid.success, true, "Les champs de personnalisation doivent être acceptés");
+    assert.equal(
+        settingsSchema.safeParse({ torrentioEgress: "auto" }).success,
+        true,
+        "torrentioEgress=auto accepté"
+    );
+
+    assert.equal(settingsSchema.safeParse({ embedHtml: "a".repeat(4001) }).success, false, "Embed trop long refusé");
+    assert.equal(settingsSchema.safeParse({ embedIframeUrl: "https://x.tld/" + "a".repeat(500) }).success, false);
+    assert.equal(settingsSchema.safeParse({ embedIframeHeight: 10 }).success, false, "Hauteur trop petite refusée");
+    assert.equal(settingsSchema.safeParse({ embedIframeHeight: 5000 }).success, false, "Hauteur trop grande refusée");
+    assert.equal(settingsSchema.safeParse({ torrentioEgress: "warp" }).success, false, "Valeur d'egress inconnue refusée");
+    assert.equal(settingsSchema.safeParse({ champInconnu: 1 }).success, false, "Schéma strict : champ inconnu refusé");
 });

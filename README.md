@@ -32,6 +32,16 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
 - **Recherche à la demande (On-Demand)** : Interrogation instantanée de votre Prowlarr lorsqu'un contenu n'est pas encore en cache.
 - **Intégration Lumio** : Option pour enrichir les flux instantanés à la demande via votre manifest perso Lumio.
 - **Intégration Torrentio** : Collez l'URL de manifest Torrentio **contenant vos filtres** (Taille, Seed, Langue, Résolutions) ; l'addon récupère les torrents en cache et lit avec **votre propre clé AllDebrid/Torbox** (le débridage doit rester désactivé côté Torrentio). Cloudflare renvoyant un **403** aux IP de serveur, le proxy **WARP** est utilisé automatiquement (repli direct), et une instance Torrentio **auto-hébergée** est également acceptée.
+  - **Diagnostic** : en cas d'échec, le test affiche le résultat de **chaque tentative** (ex. `tentatives : proxy:403 • direct:403`) — vous savez immédiatement si c'est le proxy ou l'IP du serveur qui est bloqué.
+  - **Choix de l'egress** : Admin → Paramètres permet de basculer entre _Auto_ (proxy/WARP puis IP du serveur) et _Direct d'abord_. Un proxy dédié peut être fourni via `TORRENTIO_PROXY` sans toucher au WARP utilisé par AllDebrid.
+  - **Si les deux chemins sont bloqués** : hébergez votre propre instance Torrentio, placez un Cloudflare Worker en façade, ou utilisez une autre instance publique — le champ accepte n'importe quelle URL de manifest.
+
+### 🎨 Personnalisation de la Page Publique (Admin)
+
+- **Embed sous le titre** : un bloc de contenu (texte, liens, images, listes) affiché juste sous le titre de la page d'accueil, **entièrement configurable depuis l'admin**.
+- **Iframe externe** (YouTube, widget…) : HTTPS uniquement, rendue en **bac à sable** (`sandbox`), chargement différé.
+- **Bouton Discord** : lien vers votre communauté (`discord.gg` / `discord.com` uniquement), masqué tant qu'aucune URL n'est enregistrée.
+- **Sécurité** : le HTML est **assaini par liste blanche** (aucun `script`, `iframe`, `style`, gestionnaire d'événements ni schéma `javascript:`), validé à l'enregistrement **et** au rendu — voir `SECURITY.md` § I.
 
 ### 🇯🇵 Module Spécialisé Animés (Anitomy & Mapping Fribb)
 
