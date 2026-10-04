@@ -374,6 +374,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
             preValidateCache: req.body.preValidateCache !== undefined ? Boolean(req.body.preValidateCache) : true,
             disableCatalogs: Boolean(disableCatalogs),
             lumioUrl: (req.body.lumioUrl && req.body.lumioUrl.trim()) || "",
+            torrentioUrl: (req.body.torrentioUrl && req.body.torrentioUrl.trim()) || "",
             enabledCatalogs: Array.isArray(enabledCatalogs)
                 ? enabledCatalogs
                 : enabledCatalogs
@@ -468,6 +469,7 @@ app.post("/api/user/login", authLimiter, (req, res) => {
                 preValidateCache: config.preValidateCache !== false,
                 disableCatalogs: Boolean(config.disableCatalogs),
                 lumioUrl: config.lumioUrl || "",
+                torrentioUrl: config.torrentioUrl || "",
                 enabledCatalogs: config.enabledCatalogs
             }
         });
@@ -576,6 +578,12 @@ app.post("/api/user/update", authLimiter, (req, res) => {
                         ? req.body.lumioUrl.trim()
                         : ""
                     : currentConfig.lumioUrl || "",
+            torrentioUrl:
+                req.body.torrentioUrl !== undefined
+                    ? req.body.torrentioUrl
+                        ? req.body.torrentioUrl.trim()
+                        : ""
+                    : currentConfig.torrentioUrl || "",
             enabledCatalogs: Array.isArray(enabledCatalogs)
                 ? enabledCatalogs
                 : enabledCatalogs
@@ -694,6 +702,76 @@ app.post("/api/check/lumio", apiCheckLimiter, async (req, res) => {
             error: err.response
                 ? `Erreur HTTP ${err.response.status} de Lumio`
                 : err.message || "Impossible de joindre Lumio"
+        });
+    }
+});
+
+// Sondage du manifest Torrentio. L'addon n'exploite QUE les infoHash de Torrentio : la clé debrid
+// de l'utilisateur reste dans l'addon et n'est jamais transmise à Torrentio.
+app.post("/api/check/torrentio", apiCheckLimiter, async (req, res) => {
+    const { torrentioUrl } = req.body;
+    if (!torrentioUrl || typeof torrentioUrl !== "string" || !torrentioUrl.trim()) {
+        return res.json({
+            success: false,
+            valid: false,
+            error: "Veuillez saisir l'URL de votre manifest Torrentio"
+        });
+    }
+
+    let raw = torrentioUrl.trim();
+    if (!raw.endsWith("/manifest.json")) {
+        raw = raw.replace(/\/+$/, "") + "/manifest.json";
+    }
+
+    // Garde SSRF : autorise les services auto-hébergés mais refuse les cibles dangereuses
+    const ssrfCheck = await assertSafeSelfHostedUrl(raw);
+    if (!ssrfCheck.ok) {
+        return res.json({
+            success: false,
+            valid: false,
+            error: `URL Torrentio refusée (sécurité) : ${ssrfCheck.error}`
+        });
+    }
+
+    try {
+        const resp = await axios.get(raw, {
+            headers: {
+                "User-Agent": BROWSER_UA,
+                Accept: "application/json"
+            },
+            timeout: 5000
+        });
+
+        const resources = resp.data && Array.isArray(resp.data.resources) ? resp.data.resources : [];
+        const hasStreamResource = resources.some(r => r && r.name === "stream");
+        if (resp.status === 200 && resp.data && resp.data.id && (resources.length === 0 || hasStreamResource)) {
+            return res.json({
+                success: true,
+                valid: true,
+                name: resp.data.name || "Torrentio",
+                version: resp.data.version || "1.0",
+                description: resp.data.description || ""
+            });
+        }
+        return res.json({
+            success: false,
+            valid: false,
+            error: "Réponse reçue mais le manifest Stremio est invalide (id ou ressource 'stream' manquante)"
+        });
+    } catch (err) {
+        if (err.response && err.response.status === 404) {
+            return res.json({
+                success: false,
+                valid: false,
+                error: "Manifest introuvable (HTTP 404). Vérifiez l'URL de votre manifest Torrentio."
+            });
+        }
+        return res.json({
+            success: false,
+            valid: false,
+            error: err.response
+                ? `Erreur HTTP ${err.response.status} de Torrentio`
+                : err.message || "Impossible de joindre Torrentio"
         });
     }
 });

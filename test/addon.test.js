@@ -1131,6 +1131,14 @@ test("UI - Client script in renderConfigPage and renderAdminPage compiles withou
     assert.ok(configHtml.includes("Actifs (24h)"), "Le libellé « Actifs (24h) » doit être présent");
     assert.ok(!configHtml.includes('id="statCached"'), "La stat « En cache » doit avoir été retirée");
     assert.ok(!configHtml.includes("En cache"), "Le libellé « En cache » doit avoir été retiré");
+
+    // 4. Champ Torrentio présent (inscription + édition) avec le lien de configuration
+    assert.ok(configHtml.includes('id="torrentioUrl"'), "Le champ Torrentio (inscription) doit être présent");
+    assert.ok(configHtml.includes('id="editTorrentioUrl"'), "Le champ Torrentio (édition) doit être présent");
+    assert.ok(
+        configHtml.includes("torrentio.strem.fun/configure"),
+        "Le lien vers la configuration Torrentio doit être présent"
+    );
 });
 
 test("Helpers - formatAioStream handles isInstant with ⚡, 🔍 and ⏳ badges", () => {
@@ -4035,6 +4043,58 @@ test("Security - Strict CORS blocks unauthorized third-party origins on /api and
     }
 });
 
+// Doit s'exécuter AVANT le test de rate-limiting (qui épuise apiCheckLimiter : 35 requêtes > 30/min)
+test("API Torrentio - /api/check/torrentio valide le manifest et bloque les cibles SSRF", async () => {
+    const app = require("../index");
+    const axios = require("axios");
+    const originalGet = axios.get;
+
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    axios.get = async url => {
+        const u = typeof url === "string" ? url : "";
+        if (u.includes("torrentio.strem.fun")) {
+            return {
+                status: 200,
+                data: {
+                    id: "community.torrentio",
+                    version: "1.0.0",
+                    name: "Torrentio",
+                    resources: [{ name: "stream" }]
+                }
+            };
+        }
+        return { data: {} };
+    };
+
+    try {
+        // 1. Manifest Torrentio valide
+        const ok = await axios.post(`${base}/api/check/torrentio`, {
+            torrentioUrl: "https://torrentio.strem.fun/sort=size%7Clanguage=french/manifest.json"
+        });
+        assert.equal(ok.status, 200);
+        assert.equal(ok.data.valid, true, "Un manifest Torrentio valide doit être accepté");
+        assert.equal(ok.data.name, "Torrentio");
+
+        // 2. Cible SSRF (métadonnées cloud) refusée
+        const ssrf = await axios.post(`${base}/api/check/torrentio`, {
+            torrentioUrl: "http://169.254.169.254/manifest.json"
+        });
+        assert.equal(ssrf.status, 200);
+        assert.equal(ssrf.data.valid, false, "Les métadonnées cloud doivent être refusées");
+        assert.ok(String(ssrf.data.error).includes("refusée"), "Le message doit mentionner le refus de sécurité");
+
+        // 3. URL vide
+        const empty = await axios.post(`${base}/api/check/torrentio`, { torrentioUrl: "" });
+        assert.equal(empty.data.valid, false, "Une URL vide doit être refusée");
+    } finally {
+        axios.get = originalGet;
+        server.close();
+    }
+});
+
 test("Security - Rate Limiting on /api/check endpoints (apiCheckLimiter)", async () => {
     const app = require("../index");
     const axios = require("axios");
@@ -4226,4 +4286,142 @@ test("Catalogues - artefacts (sample/bonus/zip/srt) exclus de l'historique", asy
         alldebrid.adGet = originalAdGet;
         axios.get = originalGet;
     }
+});
+
+test("Torrentio - les infoHash sont résolus avec la clé de l'addon (jamais l'URL Torrentio)", async () => {
+    const { handleStream } = require("../lib/stremio");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+    const originalGet = axios.get;
+    const originalAdGet = alldebrid.adGet;
+    const originalPreValidate = alldebrid.preValidateMagnets;
+
+    const H_VALID = "a".repeat(40);
+    const H_SAMPLE = "b".repeat(40);
+    const H_720 = "c".repeat(40);
+
+    let interceptedEndpoint = null;
+
+    axios.get = async url => {
+        const u = typeof url === "string" ? url : "";
+        if (u.includes("torrentio.strem.fun")) {
+            interceptedEndpoint = u;
+            return {
+                data: {
+                    streams: [
+                        {
+                            name: "Torrentio\n1080p",
+                            title: "Test.Film.2024.1080p.WEB-DL.mkv\n👤 42 💾 3.5 GB ⚙️ 1337x",
+                            infoHash: H_VALID,
+                            fileIdx: 0,
+                            behaviorHints: { filename: "Test.Film.2024.1080p.WEB-DL.mkv" }
+                        },
+                        {
+                            name: "Torrentio\n1080p",
+                            title: "Test.Film.2024.SAMPLE.mkv\n👤 99 💾 20 MB ⚙️ 1337x",
+                            infoHash: H_SAMPLE,
+                            behaviorHints: { filename: "Test.Film.2024.SAMPLE.mkv" }
+                        },
+                        {
+                            name: "Torrentio\n720p",
+                            title: "Test.Film.2024.720p.WEB-DL.mkv\n👤 12 💾 1.2 GB ⚙️ YTS",
+                            infoHash: H_720,
+                            behaviorHints: { filename: "Test.Film.2024.720p.WEB-DL.mkv" }
+                        },
+                        // Flux sans infoHash (url Torrentio) → doit être ignoré
+                        { name: "Torrentio", title: "lien direct", url: "https://torrentio.strem.fun/play/abc" }
+                    ]
+                }
+            };
+        }
+        return { data: {} };
+    };
+
+    alldebrid.adGet = async () => ({ data: { status: "error" } });
+    alldebrid.preValidateMagnets = async () => ({});
+
+    try {
+        const config = {
+            apiKey: "dummy_ad_key",
+            debridProvider: "alldebrid",
+            torrentioUrl:
+                "https://torrentio.strem.fun/sort=size%7Clanguage=french%7Cqualityfilter=480p,other,cam,unknown/manifest.json",
+            prowlarrKey: "off"
+        };
+
+        const result = await handleStream(
+            config,
+            "movie",
+            "tt1234567",
+            { movies: {}, series: {} },
+            "http://localhost:3000",
+            "test-user"
+        );
+
+        assert.ok(interceptedEndpoint, "L'endpoint Torrentio doit être appelé");
+        assert.ok(
+            interceptedEndpoint.includes(
+                "https://torrentio.strem.fun/sort=size%7Clanguage=french%7Cqualityfilter=480p,other,cam,unknown/stream/movie/tt1234567.json"
+            ),
+            "L'URL Torrentio doit conserver les filtres et viser le bon endpoint stream"
+        );
+
+        assert.ok(result && Array.isArray(result.streams), "Doit renvoyer un tableau de flux");
+        assert.ok(
+            !result.streams.some(s => String(s.url || "").includes("torrentio")),
+            "Aucune URL Torrentio ne doit fuiter (la clé de l'addon sert à la lecture)"
+        );
+
+        const resolvedHashes = result.streams
+            .map(s => (String(s.url || "").match(/\/resolve\/[^/]+\/[^/]+\/hash_([a-f0-9]{40})/) || [])[1])
+            .filter(Boolean);
+
+        assert.ok(resolvedHashes.includes(H_VALID), "Le film 1080p doit être résolu via /resolve/.../hash_<infoHash>");
+        assert.ok(resolvedHashes.includes(H_720), "Le film 720p doit être résolu");
+        assert.ok(!resolvedHashes.includes(H_SAMPLE), "Le SAMPLE doit être exclu des résultats Torrentio");
+
+        const torrentioStreams = result.streams.filter(s => String(s.name || "").includes("Torrentio"));
+        assert.ok(torrentioStreams.length > 0, "Les flux Torrentio doivent porter un badge Torrentio");
+        assert.ok(
+            torrentioStreams.some(s => String(s.title || "").includes("🚀 Torrentio")),
+            "La provenance Torrentio doit être affichée"
+        );
+    } finally {
+        axios.get = originalGet;
+        alldebrid.adGet = originalAdGet;
+        alldebrid.preValidateMagnets = originalPreValidate;
+    }
+});
+
+test("Helpers - formatAioStream badges et provenance Torrentio", () => {
+    const { formatAioStream } = require("../lib/helpers");
+
+    const instant = formatAioStream({
+        filename: "Film.2024.1080p.WEB-DL.mkv",
+        sizeBytes: 3000000000,
+        seeders: 42,
+        indexer: "Torrentio | 1337x",
+        cacheType: "torrentio",
+        statusTag: "[AD ⚡ Torrentio]",
+        subtitle: "⚡ Instantané Torrentio • AllDebrid",
+        isInstant: true,
+        debridProvider: "alldebrid",
+        url: "http://localhost:3000/resolve/test-user/tt1/hash_x"
+    });
+    assert.ok(instant.name.includes("[AD ⚡ Torrentio]"), "Badge instantané Torrentio");
+    assert.ok(instant.title.includes("🚀 Torrentio (1337x)"), "Ligne de provenance Torrentio (indexer)");
+    assert.ok(instant.title.includes("⚡ Instantané Torrentio • AllDebrid"), "Statut instantané Torrentio");
+
+    const notInstant = formatAioStream({
+        filename: "Film.2024.1080p.WEB-DL.mkv",
+        seeders: 12,
+        indexer: "Torrentio | YTS",
+        cacheType: "torrentio",
+        statusTag: "[AD 🔍 Torrentio]",
+        subtitle: "🔍 Torrentio (12 seeders) • Vérif. AllDebrid au clic",
+        isInstant: false,
+        debridProvider: "alldebrid"
+    });
+    assert.ok(notInstant.name.includes("[AD 🔍 Torrentio]"), "Badge recherche Torrentio");
+    assert.ok(notInstant.title.includes("🔍 Torrentio (12 seeders)"), "Statut de vérification au clic");
 });
