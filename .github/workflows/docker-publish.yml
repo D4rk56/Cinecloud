@@ -22,10 +22,18 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+# Les exécutions sur une même branche/tag sont sérialisées au lieu de se disputer les runners
+# (utile lors des incidents GitHub « runner not acquired ») ; seules les PR sont annulées.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
+    # Empêche un job bloqué en file d'attente de consommer 6 h de quota
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -45,6 +53,8 @@ jobs:
   build-and-push:
     name: Build & Push GHCR Image
     runs-on: ubuntu-latest
+    # Build multi-arch (amd64 + arm64 via QEMU) : plafond large mais borné
+    timeout-minutes: 60
     needs: test
     permissions:
       contents: read
