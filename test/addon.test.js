@@ -4889,3 +4889,70 @@ test("C4 - le catalogue Mon Historique ne duplique pas un film et privilegie la 
     }
 });
 
+test("MAX_CLASSIFY - un historique surdimensionne est plafonne (protection saturation TMDB)", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const { TMDB_KEY_DEFAULT } = require("../lib/helpers");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+
+    const originalAdGet = alldebrid.adGet;
+    const originalAxiosGet = axios.get;
+
+    // 600 liens valides : très au-dessus du plafond de 200. Sans bornage, la page
+    // déclenchait 600 classifications (donc autant de recherches TMDB potentielles)
+    // et la requête finissait saturée -> catalogue vide.
+    //
+    // On ne mock PAS `helpers.classifyContent` : stremio.js le lie par
+    // déstructuration au chargement du module, donc une réassignation tardive
+    // serait ignorée. On instrumente plutôt le cache de classification, qui est
+    // la première chose que touche classifyContent et qui reçoit une entrée par
+    // élément à classer.
+    const history = [];
+    for (let i = 0; i < 600; i++) {
+        history.push({
+            filename: `Movie.Number.${i}.2024.MULTi.1080p.WEB-DL.x264-GROUP.mkv`,
+            link: `https://debrid.it/link${i}`,
+            size: 3000000000
+        });
+    }
+    alldebrid.adGet = async endpoint => {
+        if (endpoint === "/v4/user/history") {
+            return { data: { status: "success", data: { history } } };
+        }
+        return { data: { status: "error" } };
+    };
+    // Réseau coupé : la classification échouera, mais le cache Proxy de db.js
+    // enregistrera tout de même chaque entrée consultée.
+    axios.get = async () => {
+        throw new Error("network off (test hermétique)");
+    };
+
+    try {
+        const config = {
+            apiKey: "mock_ad_key",
+            tmdbKey: TMDB_KEY_DEFAULT,
+            debridProvider: "alldebrid",
+            enabledCatalogs: ["my_ad_history"]
+        };
+        const cache = { movies: {}, series: {}, classification: {} };
+
+        const res = await handleCatalog(config, "movie", "my_ad_history", cache);
+
+        // Le cache de classification contient exactement 1 entrée par élément
+        // effectivement soumis à classifyContent (clé `v2:link:<lien>`).
+        const classifiedKeys = Object.keys(cache.classification || {});
+        assert.ok(
+            classifiedKeys.length > 0,
+            "Au moins un élément doit avoir été soumis à la classification"
+        );
+        assert.ok(
+            classifiedKeys.length <= 200,
+            `Le nombre d'éléments classifiés doit rester plafonné à 200 (obtenu ${classifiedKeys.length} pour 600 liens)`
+        );
+        assert.ok(Array.isArray(res.metas), "handleCatalog doit renvoyer un tableau de metas");
+        console.log(`[Test MAX_CLASSIFY] ${classifiedKeys.length} éléments classifiés pour 600 liens entrants.`);
+    } finally {
+        alldebrid.adGet = originalAdGet;
+        axios.get = originalAxiosGet;
+    }
+});
