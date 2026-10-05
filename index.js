@@ -91,6 +91,11 @@ const {
     settingsSchema,
     cacheClearSchema,
     cleanupMagnetsSchema,
+    userRegisterSchema,
+    userLoginSchema,
+    userUpdateSchema,
+    userDeleteSchema,
+    userCleanupMagnetsSchema,
     validateAdmin
 } = require("./lib/admin-schemas");
 const { handleManifest, handleCatalog, handleMeta, handleStream } = require("./lib/stremio");
@@ -135,8 +140,67 @@ function resolveTrustProxy() {
 }
 app.set("trust proxy", resolveTrustProxy());
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Plafond de taille des corps de requête : les payloads users (config debrid +
+// catalogues) pèsent quelques Ko. Au-delà, express rejette avec un HTTP 413, ce qui
+// coupe les-Allow-DoS par corps géant sur /api/user/register et /api/user/update.
+const MAX_BODY_SIZE = "100kb";
+app.use(express.json({ limit: MAX_BODY_SIZE }));
+app.use(express.urlencoded({ extended: true, limit: MAX_BODY_SIZE }));
+
+// Politique d'origine unique, partagée par les routes API et les routes web.
+// Refuse par défaut toute origine tierce ; n'autorise que le même hôte, les
+// adresses de loopback, et la liste CORS_ALLOWED_ORIGINS de l'opérateur.
+function isOriginAllowed(origin, reqHost) {
+    let parsedOrigin;
+    try {
+        parsedOrigin = new URL(origin);
+    } catch (e) {
+        return false;
+    }
+    const originHost = parsedOrigin.host.toLowerCase();
+    const isSameHost = Boolean(reqHost) && originHost === String(reqHost).toLowerCase();
+    const isLocal = ["localhost", "127.0.0.1", "::1"].includes(parsedOrigin.hostname.toLowerCase());
+    const customAllowed = (process.env.CORS_ALLOWED_ORIGINS || "")
+        .split(",")
+        .map(o => o.trim().toLowerCase())
+        .filter(Boolean);
+    const isCustomAllowed =
+        customAllowed.includes(origin.toLowerCase()) || customAllowed.includes(originHost);
+    return isSameHost || isLocal || isCustomAllowed;
+}
+
+// En-têtes de sécurité appliqués à toutes les réponses.
+// `script-src` / `style-src` conservent 'unsafe-inline' : les deux pages
+// (configuration et admin) sont rendues par lib/ui.js avec des <script> et des
+// gestionnaires onclick= en ligne. La CSP conserve néanmoins son bénéfice réel
+// sur les vecteurs d'injection : pas de chargement de script externe arbitraire
+// (script-src 'self'), ni de plugin (object-src 'none'), ni de base href injecté
+// (base-uri 'self'). Les polices Google et les affiches TMDB sont explicitement
+// autorisées ; l'iframe d'embed est restreinte à HTTPS.
+const CSP_DIRECTIVES = [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+    "form-action 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:",
+    "connect-src 'self'",
+    "frame-src https:"
+].join("; ");
+
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+    res.setHeader("Content-Security-Policy", CSP_DIRECTIVES);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+    next();
+});
 
 // Configuration CORS stricte et contextualisée
 app.use((req, res, next) => {
@@ -170,41 +234,27 @@ app.use((req, res, next) => {
             return next();
         }
 
-        try {
-            const parsedOrigin = new URL(origin);
-            const reqHost = req.get("host"); // ex: localhost:3000 ou domaine.fr
-            const originHost = parsedOrigin.host; // ex: localhost:3000
-
-            const isSameHost = originHost.toLowerCase() === (reqHost || "").toLowerCase();
-            const isLocal = ["localhost", "127.0.0.1", "::1"].includes(parsedOrigin.hostname.toLowerCase());
-            const customAllowed = (process.env.CORS_ALLOWED_ORIGINS || "")
-                .split(",")
-                .map(o => o.trim().toLowerCase())
-                .filter(Boolean);
-            const isCustomAllowed =
-                customAllowed.includes(origin.toLowerCase()) || customAllowed.includes(originHost.toLowerCase());
-
-            if (isSameHost || isLocal || isCustomAllowed) {
-                res.setHeader("Access-Control-Allow-Origin", origin);
-                res.setHeader("Access-Control-Allow-Credentials", "true");
-                res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, Accept");
-                res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-                if (req.method === "OPTIONS") return res.sendStatus(204);
-                return next();
-            }
-        } catch (e) {}
+        if (isOriginAllowed(origin, req.get("host"))) {
+            res.setHeader("Access-Control-Allow-Origin", origin);
+            res.setHeader("Access-Control-Allow-Credentials", "true");
+            res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, Accept");
+            res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            if (req.method === "OPTIONS") return res.sendStatus(204);
+            return next();
+        }
 
         // Origine tierce non autorisée : blocage strict
-        if (req.method === "OPTIONS") {
-            return res.status(403).json({ error: "CORS Forbidden: Origine non autorisée pour l'API." });
-        }
         return res.status(403).json({ error: "CORS Forbidden: Origine non autorisée pour l'API." });
     }
 
     // 3. Autres routes (ex: /configure, /, /resolve/...)
+    // L'en-tête Access-Control-Allow-Origin n'est émis que pour une origine
+    // explicitement autorisée. Auparavant, l'Origin de la requête était
+    // renvoyé tel quel, ce qui exposait ces pages à toute origine tierce.
     const origin = req.headers.origin;
-    if (origin) {
+    if (origin && isOriginAllowed(origin, req.get("host"))) {
         res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Vary", "Origin");
         res.setHeader("Access-Control-Allow-Headers", "*");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     }
@@ -275,6 +325,25 @@ function requireAdmin(req, res, next) {
     next();
 }
 
+// Purge les sessions administrateur expirées et non réutilisées.
+// Sans appel périodique, chaque login admin empile une entrée jusqu'à 8 h de TTL :
+// la Map grossit alors que les tokens ne sont cleans qu'au moment de leur ré-utilisation
+// ou d'un logout explicite.
+function purgeExpiredAdminTokens() {
+    const now = Date.now();
+    let removed = 0;
+    for (const [token, expiresAt] of activeAdminTokens) {
+        if (now > expiresAt) {
+            activeAdminTokens.delete(token);
+            removed++;
+        }
+    }
+    if (removed > 0) {
+        console.log(`[Admin] ${removed} session(s) administrateur expirée(s) purgée(s) du cache mémoire.`);
+    }
+    return removed;
+}
+
 // Récupère la configuration d'un utilisateur par son UUID
 function getUserConfig(uuid) {
     if (!uuid || uuid.length !== 36) return null;
@@ -293,7 +362,7 @@ function getUserConfig(uuid) {
 // =============================================================================
 
 // Inscription / Création d'un nouvel Addon sécurisé
-app.post("/api/user/register", authLimiter, async (req, res) => {
+app.post("/api/user/register", authLimiter, validateAdmin({ body: userRegisterSchema }), async (req, res) => {
     try {
         const {
             password,
@@ -423,7 +492,7 @@ app.post("/api/user/register", authLimiter, async (req, res) => {
 });
 
 // Connexion / Récupération des réglages existants
-app.post("/api/user/login", authLimiter, (req, res) => {
+app.post("/api/user/login", authLimiter, validateAdmin({ body: userLoginSchema }), (req, res) => {
     try {
         const { uuid, password } = req.body;
         if (!uuid || !password) {
@@ -480,7 +549,7 @@ app.post("/api/user/login", authLimiter, (req, res) => {
 });
 
 // Mise à jour de la configuration existante
-app.post("/api/user/update", authLimiter, (req, res) => {
+app.post("/api/user/update", authLimiter, validateAdmin({ body: userUpdateSchema }), (req, res) => {
     try {
         const {
             uuid,
@@ -798,7 +867,7 @@ app.post("/api/check/torrentio", apiCheckLimiter, async (req, res) => {
 });
 
 // Suppression de configuration / Compte utilisateur
-app.post("/api/user/delete", authLimiter, (req, res) => {
+app.post("/api/user/delete", authLimiter, validateAdmin({ body: userDeleteSchema }), (req, res) => {
     try {
         const { uuid, password } = req.body;
         if (!uuid || !password) {
@@ -819,7 +888,7 @@ app.post("/api/user/delete", authLimiter, (req, res) => {
 });
 
 // Nettoyage des magnets AllDebrid bloqués pour un utilisateur
-app.post("/api/user/cleanup-magnets", authLimiter, async (req, res) => {
+app.post("/api/user/cleanup-magnets", authLimiter, validateAdmin({ body: userCleanupMagnetsSchema }), async (req, res) => {
     try {
         const { uuid, password } = req.body;
         if (!uuid || !password) {
@@ -872,8 +941,18 @@ app.post("/api/check/tmdb", apiCheckLimiter, async (req, res) => {
     res.json(result);
 });
 
-app.get("/api/stats", (req, res) => {
-    res.json(getUserStats());
+// Compteurs publics minimaux : ils alimentent la page d'accueil (statRegistered /
+// statActive dans lib/ui.js). Les métriques d'infrastructure (torrents en cache,
+// instantanés, films, instances Prowlarr partagées) restent réservées à
+// /api/admin/stats, protégé par requireAdmin. Route limitée pour ne pas être
+// transformée en sonde de volumétrie.
+app.get("/api/stats", apiCheckLimiter, (req, res) => {
+    const stats = getUserStats();
+    res.json({
+        totalUsers: stats.totalUsers,
+        active24h: stats.active24h,
+        active10m: stats.active10m
+    });
 });
 
 // =============================================================================
@@ -1268,6 +1347,13 @@ const purgeTimer = setInterval(
 );
 if (purgeTimer && purgeTimer.unref) {
     purgeTimer.unref();
+}
+
+// Purge périodique des sessions administrateur expirées (évite la croissance
+// illimitée de activeAdminTokens sur les logins successifs).
+const adminTokenPurgeTimer = setInterval(purgeExpiredAdminTokens, 15 * 60 * 1000);
+if (adminTokenPurgeTimer && adminTokenPurgeTimer.unref) {
+    adminTokenPurgeTimer.unref();
 }
 
 app.resolveAdminPassword = resolveAdminPassword;
