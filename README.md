@@ -151,8 +151,8 @@ server {
 | `ADMIN_PASSWORD`   | Mot de passe d'accès au panneau `/admin`                | _Généré automatiquement si absent_   |
 | `PROWLARR_URL`     | URL de votre instance Prowlarr globale (optionnel)      | `http://prowlarr:9696`               |
 | `PROWLARR_KEY`     | Clé API de votre instance Prowlarr globale (optionnel)  | _Vide_                               |
-| `HTTP_TIMEOUT`     | Timeout par défaut des requêtes AllDebrid (ms)          | `10000`                              |
-| `PROWLARR_TIMEOUT` | Timeout des requêtes Prowlarr on-demand (ms)            | `8000`                               |
+
+> **Note** : les timeouts HTTP AllDebrid et Prowlarr ne se règlent **pas** par variable d'environnement mais depuis le panneau d'administration (`/admin` → Paramètres). Voir `README.md` § Sécurité.
 
 ---
 
@@ -178,7 +178,7 @@ npm start
 ## 🔒 Sécurité & Confidentialité
 
 - **Chiffrement AES-256-GCM** : Toutes les clés API AllDebrid et Torbox sont chiffrées au repos dans la base SQLite locale.
-- **Hachage PBKDF2** : Les mots de passe utilisateurs sont hachés avec sel unique et 100 000 itérations.
+- **Hachage scrypt** : Les mots de passe utilisateurs sont hachés avec `crypto.scryptSync` (sel aléatoire de 16 octets, clé de 64 octets) et vérifiés en temps constant (`timingSafeEqual`).
 - **Protection Rate-Limiting** : Protection contre les attaques par force brute sur `/api/user/login`, `/api/admin/login` et les requêtes manifestes.
 - **Échappement XSS & Protection Injections** : Toutes les requêtes SQLite sont préparées (`db.prepare(...)`) et toutes les sorties HTML/logs sont strictement assainies.
 
