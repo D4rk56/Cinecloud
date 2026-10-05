@@ -152,7 +152,7 @@ server {
 | `PROWLARR_URL`     | URL de votre instance Prowlarr globale (optionnel)      | `http://prowlarr:9696`               |
 | `PROWLARR_KEY`     | Clé API de votre instance Prowlarr globale (optionnel)  | _Vide_                               |
 
-> **Note** : les timeouts HTTP AllDebrid et Prowlarr ne se règlent **pas** par variable d'environnement mais depuis le panneau d'administration (`/admin` → Paramètres). Voir `README.md` § Sécurité.
+> **Note** : les timeouts HTTP AllDebrid et Prowlarr ne se règlent **pas** par variable d'environnement mais depuis le panneau d'administration (`/admin` → Paramètres), puis enregistrés en base.
 
 ---
 
