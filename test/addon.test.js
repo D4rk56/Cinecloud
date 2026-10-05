@@ -4788,3 +4788,104 @@ test("UI Admin - le filtre de type de log fonctionne même en pause", () => {
         "saveSettings doit transmettre les nouveaux réglages"
     );
 });
+
+test("C4 - pickBestReleaseFilename retient la meilleure release d'un groupe (resolution > source > taille)", () => {
+    const { pickBestReleaseFilename } = require("../lib/helpers");
+
+    // 1. La resolution prime sur l'ordre d'arrivee (bug d'origine : le premier fichier
+    //    trouve etait retenu, donc un groupe 1080p + 2160p s'affichait en 1080p).
+    assert.equal(
+        pickBestReleaseFilename(["Dune.Part.Two.2024.1080p.WEB-DL.mkv", "Dune.Part.Two.2024.2160p.BluRay.mkv"]),
+        "Dune.Part.Two.2024.2160p.BluRay.mkv",
+        "Le 2160p doit gagner meme s'il arrive en second"
+    );
+    assert.equal(
+        pickBestReleaseFilename(["Film.2024.2160p.WEB-DL.mkv", "Film.2024.1080p.BluRay.mkv"]),
+        "Film.2024.2160p.WEB-DL.mkv",
+        "La resolution prime sur la source"
+    );
+
+    // 2. A resolution egale, la source la plus qualitative gagne.
+    assert.equal(
+        pickBestReleaseFilename(["Show.S01.1080p.WEBRip.mkv", "Show.S01.1080p.BluRay.mkv"]),
+        "Show.S01.1080p.BluRay.mkv",
+        "BluRay doit gagner face a WEBRip"
+    );
+
+    // 3. A resolution et source egales, la taille la plus lourde gagne.
+    assert.equal(
+        pickBestReleaseFilename(["A.2024.1080p.WEB-DL.mkv", "B.2024.1080p.WEB-DL.mkv"], [100, 900]),
+        "B.2024.1080p.WEB-DL.mkv",
+        "Le fichier le plus lourd doit gagner a qualite egale"
+    );
+
+    // 4. Cas limites : ne doit jamais lever.
+    assert.equal(pickBestReleaseFilename(["unique.mkv"]), "unique.mkv", "Un seul candidat est renvoye tel quel");
+    assert.equal(pickBestReleaseFilename([]), null, "Liste vide -> null");
+    assert.equal(pickBestReleaseFilename(null), null, "Entree nulle -> null");
+    assert.equal(pickBestReleaseFilename(["", "  "]), null, "Chaines vides filtrees -> null");
+    assert.equal(
+        pickBestReleaseFilename(["Sans.Resolution.mkv", "Autre.Sans.Resolution.mkv"]),
+        "Sans.Resolution.mkv",
+        "A qualite egale, le premier reste retenu (stabilite deterministe)"
+    );
+});
+
+test("C4 - le catalogue Mon Historique ne duplique pas un film et privilegie la meilleure release", async () => {
+    const { handleCatalog } = require("../lib/stremio");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+    const { TMDB_KEY_DEFAULT } = require("../lib/helpers");
+
+    const originalAdGet = alldebrid.adGet;
+    const originalAxiosGet = axios.get;
+
+    // Deux liens du MEME film en qualites differentes, le 1080p liste en premier
+    // pour reproduire exactement le bug d'origine.
+    alldebrid.adGet = async endpoint => {
+        if (endpoint === "/v4/user/history") {
+            return {
+                data: {
+                    status: "success",
+                    data: {
+                        history: [
+                            {
+                                filename: "Gladiator.II.2024.MULTI.1080p.WEB-DL.x264-GROUP.mkv",
+                                link: "https://debrid.it/aaaa",
+                                size: 3000000000
+                            },
+                            {
+                                filename: "Gladiator.II.2024.MULTI.2160p.BluRay.x265-GROUP.mkv",
+                                link: "https://debrid.it/bbbb",
+                                size: 12000000000
+                            }
+                        ]
+                    }
+                }
+            };
+        }
+        return { data: { status: "error" } };
+    };
+    axios.get = async () => ({ data: {} });
+
+    try {
+        const config = {
+            apiKey: "mock_ad_key",
+            tmdbKey: TMDB_KEY_DEFAULT,
+            debridProvider: "alldebrid",
+            enabledCatalogs: ["my_ad_history"]
+        };
+        const cache = { movies: {}, series: {}, classification: {} };
+
+        const res = await handleCatalog(config, "movie", "my_ad_history", cache);
+        assert.ok(Array.isArray(res.metas), "handleCatalog doit renvoyer un tableau de metas");
+
+        // Les deux releases relevent du meme film : une seule fiche, pas deux.
+        const gladiators = res.metas.filter(m => /gladiator/i.test(m.name || ""));
+        assert.ok(gladiators.length <= 1, "Les deux releases du meme film ne doivent pas creer deux fiches");
+    } finally {
+        alldebrid.adGet = originalAdGet;
+        axios.get = originalAxiosGet;
+    }
+});
+

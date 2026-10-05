@@ -70,7 +70,6 @@ const {
     updateUserConfig,
     updateUserPassword,
     deleteUser,
-    purgeOldCachedTorrents,
     getUserStats,
     getAllUsersAdmin,
     adminDeleteUser,
