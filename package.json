@@ -33,5 +33,12 @@
     "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.9"
+  },
+  "overrides": {
+    "basic-ftp": "^6.2.1",
+    "@tootallnate/once": "^2.0.1"
+  },
+  "allowScripts": {
+    "anitomy-js@5.4.0": true
   }
 }
