@@ -5110,3 +5110,93 @@ test("Revalidation P1 - sans reponse exploitable des debrideurs, aucun badge n'e
         deleteCachedTorrent(HASH);
     }
 });
+
+test("Stremio Streams - read-only instant check eclaire un torrent au-dela du top 12", async () => {
+    const { handleStream } = require("../lib/stremio");
+    const alldebrid = require("../lib/alldebrid");
+    const axios = require("axios");
+
+    const originalGet = axios.get;
+    const originalAdGet = alldebrid.adGet;
+    const originalCheckInstant = alldebrid.checkInstantMagnets;
+    const originalPreValidate = alldebrid.preValidateMagnets;
+
+    const TARGET = "e".repeat(40);
+    const fillers = Array.from({ length: 14 }, (_, i) => "b".repeat(38) + String(i).padStart(2, "0"));
+    const releases = [
+        ...fillers.map((h, i) => ({
+            title: `ReadOnly.Movie.2024.1080p.WEB-F${i}`,
+            infoHash: h,
+            size: 2500000000 - i * 1000000,
+            indexer: "YggTorrent",
+            seeders: 60 - i
+        })),
+        {
+            title: "ReadOnly.Movie.2024.1080p.WEB-TARGET",
+            infoHash: TARGET,
+            size: 2400000000,
+            indexer: "YggTorrent",
+            seeders: 1
+        }
+    ];
+
+    let capturedRoHashes = null;
+    let capturedMaxProbes = null;
+
+    // Phase on-demand : aucun instantane (isInstant false partout).
+    alldebrid.adGet = async () => ({ data: { status: "success", data: { magnets: [] } } });
+    // Phase read-only (B) : seul TARGET est en cache. Pre-validation : rien.
+    alldebrid.checkInstantMagnets = async hashes => {
+        capturedRoHashes = [...hashes];
+        const lowered = hashes.map(h => String(h).toLowerCase());
+        return lowered.includes(TARGET) ? { [TARGET]: true } : {};
+    };
+    alldebrid.preValidateMagnets = async (torrents, key, opts) => {
+        capturedMaxProbes = opts && opts.maxProbes;
+        return {};
+    };
+
+    axios.get = async url => {
+        if (url && typeof url === "string" && url.includes("/api/v1/search")) {
+            return { data: releases };
+        }
+        if (url && typeof url === "string" && url.includes("cinemeta.strem.io/meta/movie")) {
+            return { data: { meta: { id: "tt7777777", name: "ReadOnly Movie", year: 2024 } } };
+        }
+        return { data: {} };
+    };
+
+    try {
+        const res = await handleStream(
+            {
+                apiKey: "mock_ad_key",
+                prowlarrUrl: "http://mock-prowlarr:9696",
+                prowlarrKey: "mock_key",
+                prowlarrMode: "direct",
+                preValidateCache: true,
+                allowDownload: false
+            },
+            "movie",
+            "tt7777777",
+            {},
+            "http://localhost:3000",
+            "mock-user"
+        );
+
+        assert.ok(res && Array.isArray(res.streams), "Doit renvoyer une liste de streams");
+        assert.equal(capturedMaxProbes, 12, "preValidateMagnets doit sonder le top 12");
+        assert.ok(
+            capturedRoHashes && capturedRoHashes.length >= 15,
+            "Le read-only doit couvrir les 15 hashes (au-dela du top 12)"
+        );
+        const targetStream = res.streams.find(s => (s.url || "").includes(TARGET));
+        assert.ok(targetStream, "Le flux TARGET (15e, hors top 12) doit etre present");
+        assert.ok(targetStream.name.includes("⚡"), "Le flux TARGET doit porter l'eclair via le check read-only");
+        assert.ok(targetStream.title.includes("Instantané"), "Le statut TARGET doit etre instantane");
+    } finally {
+        axios.get = originalGet;
+        alldebrid.adGet = originalAdGet;
+        alldebrid.checkInstantMagnets = originalCheckInstant;
+        alldebrid.preValidateMagnets = originalPreValidate;
+    }
+});
