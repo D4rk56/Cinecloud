@@ -78,6 +78,13 @@ Puis vérifiez, dans cet ordre :
 5. **Filters → Result Limits / Deduplicator** : un dédoublonnage par `filename` trop agressif peut réduire la liste à un seul flux.
 6. Rappel : les filtres de Cinécloud (résolutions, langues, taille) **et** ceux d'AIOStreams s'appliquent **tous les deux**.
 
+**Après une mise à jour de Cinécloud, réinstallez/rafraîchissez l'addon dans AIOStreams.** AIOStreams **met en cache le manifeste** des addons (`manifestCache`, avec son propre TTL) : un redéploiement côté Cinécloud n'est pas vu immédiatement, et d'anciens avertissements (ex. `addon provides no idPrefixes`) peuvent subsister alors que le manifeste servi est déjà corrigé. Pour vérifier ce que Cinécloud expose réellement :
+
+```bash
+curl -s https://votre-domaine/uuid/manifest.json | jq '.resources'
+# "meta" et "stream" doivent contenir un tableau "idPrefixes" non vide
+```
+
 ### 📱 Configuration Ergonomique & Profils en 1 Clic
 
 - **3 Profils Rapides en 1 clic** :

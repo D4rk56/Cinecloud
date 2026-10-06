@@ -1084,6 +1084,11 @@ test("Catalogs - disableCatalogs hides catalogs from manifest and catalog route"
         "catalog ne doit pas déclarer d'idPrefixes (sans objet pour cette ressource)"
     );
     assert.deepEqual(manifestDefault.types, ["movie", "series", "anime"], "Le manifeste doit déclarer ses types");
+    assert.deepEqual(
+        manifestDefault.idPrefixes,
+        streamResource.idPrefixes,
+        "Le manifeste doit déclarer l'idPrefixes global (valeur par défaut des consommateurs)"
+    );
 
     // 3. Appel de handleCatalog avec disableCatalogs actif
     const catalogResult = await handleCatalog({ disableCatalogs: true }, "movie", "my_ad_magnets");
