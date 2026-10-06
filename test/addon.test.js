@@ -5155,3 +5155,178 @@ test("Stremio Streams - read-only instant check eclaire un torrent au-dela du to
         alldebrid.preValidateMagnets = originalPreValidate;
     }
 });
+
+test("Prowlarr On-Demand - aucune instance partagée n'est empruntée sans clé utilisateur", async () => {
+    const { searchProwlarrOnDemand, prowlarrOnDemandState } = require("../lib/prowlarr-worker");
+    const axios = require("axios");
+    const originalGet = axios.get;
+
+    let calls = 0;
+    axios.get = async () => {
+        calls++;
+        return { data: [] };
+    };
+
+    try {
+        prowlarrOnDemandState.reset();
+        // Ni URL ni clé : l'utilisateur n'a pas de Prowlarr → il ne doit RIEN emprunter
+        // (ni l'instance .env, ni une instance « shared » d'un autre utilisateur).
+        const results = await searchProwlarrOnDemand({
+            id: "tt1375666",
+            type: "movie",
+            cleanTitle: "Inception"
+        });
+        assert.deepEqual(results, []);
+        assert.equal(calls, 0, "Aucune requête HTTP ne doit être émise sans clé propre à l'utilisateur");
+    } finally {
+        axios.get = originalGet;
+        prowlarrOnDemandState.reset();
+    }
+});
+
+test("Prowlarr On-Demand - utilise exactement l'URL et la clé fournies", async () => {
+    const { searchProwlarrOnDemand, prowlarrOnDemandState } = require("../lib/prowlarr-worker");
+    const axios = require("axios");
+    const originalGet = axios.get;
+
+    const captured = [];
+    axios.get = async (url, cfg) => {
+        captured.push({ url, key: cfg && cfg.headers && cfg.headers["X-Api-Key"] });
+        return { data: [] };
+    };
+
+    try {
+        prowlarrOnDemandState.reset();
+        await searchProwlarrOnDemand({
+            id: "tt1375666",
+            type: "movie",
+            cleanTitle: "Inception",
+            prowlarrUrl: "http://user-own-prowlarr:9696",
+            prowlarrKey: "user_own_key"
+        });
+        assert.ok(captured.length > 0, "La recherche doit interroger l'instance de l'utilisateur");
+        assert.ok(
+            captured.every(c => c.url.startsWith("http://user-own-prowlarr:9696/")),
+            "L'URL interrogée doit être celle de l'utilisateur"
+        );
+        assert.ok(
+            captured.every(c => c.key === "user_own_key"),
+            "La clé envoyée doit être celle de l'utilisateur"
+        );
+    } finally {
+        axios.get = originalGet;
+        prowlarrOnDemandState.reset();
+    }
+});
+
+test("Prowlarr On-Demand - timeout issu des réglages et budget total borné", async () => {
+    const { searchProwlarrOnDemand, prowlarrOnDemandState } = require("../lib/prowlarr-worker");
+    const { getSystemSettings, updateSystemSettings } = require("../lib/db");
+    const axios = require("axios");
+    const originalGet = axios.get;
+    const previousBudget = getSystemSettings().prowlarrTimeoutMs;
+
+    const timeouts = [];
+    let calls = 0;
+    axios.get = async (url, cfg) => {
+        calls++;
+        timeouts.push(cfg && cfg.timeout);
+        // Simule une instance qui consomme tout le budget puis échoue
+        await new Promise(r => setTimeout(r, 1200));
+        const err = new Error("timeout of 1000ms exceeded");
+        err.code = "ECONNABORTED";
+        throw err;
+    };
+
+    try {
+        updateSystemSettings({ prowlarrTimeoutMs: 1000 });
+        prowlarrOnDemandState.reset();
+        const startedAt = Date.now();
+        const results = await searchProwlarrOnDemand({
+            id: "tt11280740:1:1",
+            type: "series",
+            cleanTitle: "Severance",
+            altTitle: "Severance FR",
+            season: 1,
+            episode: 1,
+            prowlarrUrl: "http://mock-prowlarr:9696",
+            prowlarrKey: "mock_key"
+        });
+        const elapsed = Date.now() - startedAt;
+
+        assert.deepEqual(results, []);
+        assert.equal(calls, 1, "Budget épuisé : aucune tentative de repli supplémentaire");
+        assert.ok(
+            timeouts[0] > 0 && timeouts[0] <= 1000,
+            `Le timeout doit provenir du réglage prowlarrTimeoutMs (reçu ${timeouts[0]})`
+        );
+        assert.ok(elapsed < 3000, `La recherche doit rester bornée par le budget (${elapsed} ms)`);
+    } finally {
+        axios.get = originalGet;
+        updateSystemSettings({ prowlarrTimeoutMs: previousBudget });
+        prowlarrOnDemandState.reset();
+    }
+});
+
+test("Prowlarr On-Demand - disjoncteur après 3 échecs consécutifs", async () => {
+    const { searchProwlarrOnDemand, prowlarrOnDemandState } = require("../lib/prowlarr-worker");
+    const axios = require("axios");
+    const originalGet = axios.get;
+    const originalWarn = console.warn;
+    console.warn = () => {};
+
+    let calls = 0;
+    axios.get = async () => {
+        calls++;
+        const err = new Error("connect ECONNREFUSED 127.0.0.1:9696");
+        err.code = "ECONNREFUSED";
+        throw err;
+    };
+
+    const searchArgs = {
+        id: "tt1375666",
+        type: "movie",
+        cleanTitle: "Inception",
+        prowlarrUrl: "http://dead-prowlarr:9696",
+        prowlarrKey: "mock_key"
+    };
+
+    try {
+        prowlarrOnDemandState.reset();
+        for (let i = 0; i < prowlarrOnDemandState.threshold; i++) {
+            await searchProwlarrOnDemand(searchArgs);
+        }
+        const afterFailures = calls;
+        assert.equal(afterFailures, prowlarrOnDemandState.threshold, "Une tentative par recherche");
+
+        await searchProwlarrOnDemand(searchArgs);
+        assert.equal(calls, afterFailures, "Instance en pause : plus aucune requête émise");
+
+        prowlarrOnDemandState.reset();
+        await searchProwlarrOnDemand(searchArgs);
+        assert.equal(calls, afterFailures + 1, "Après réinitialisation, la recherche repart");
+    } finally {
+        axios.get = originalGet;
+        console.warn = originalWarn;
+        prowlarrOnDemandState.reset();
+    }
+});
+
+test("Prowlarr On-Demand - stremio.js n'emprunte plus la configuration Prowlarr du serveur", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const source = fs.readFileSync(path.join(__dirname, "..", "lib", "stremio.js"), "utf8");
+
+    assert.ok(
+        !/workerProwlarr\.key/.test(source),
+        "La clé Prowlarr de l'instance .env ne doit plus être substituée à celle de l'utilisateur"
+    );
+    assert.ok(
+        !/getWorkerProwlarrConfig\(\)/.test(source),
+        "stremio.js ne doit plus résoudre la configuration Prowlarr du serveur pour l'on-demand"
+    );
+    assert.ok(
+        source.includes("hasOwnProwlarr"),
+        "La recherche à la demande doit dépendre de la clé propre à l'utilisateur"
+    );
+});

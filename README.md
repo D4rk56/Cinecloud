@@ -29,7 +29,10 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
 
 - **Cache mutualisé SQLite (WAL)** : Tous les torrents indexés et vérifiés comme instantanément disponibles sont partagés entre utilisateurs selon le mode choisi (_Partagé_, _Local_ ou _Privé_).
 - **Synchronisation RSS d'arrière-plan** : Alimentation continue des dernières sorties films et séries.
-- **Recherche à la demande (On-Demand)** : Interrogation instantanée de votre Prowlarr lorsqu'un contenu n'est pas encore en cache.
+- **Recherche à la demande (On-Demand)** : Interrogation instantanée de **votre propre** Prowlarr lorsqu'un contenu n'est pas encore en cache.
+  - **Chacun son instance** : l'instance Prowlarr du serveur (`.env`) sert **uniquement à la synchronisation RSS** qui alimente le cache partagé — elle n'est **jamais** utilisée pour les recherches des utilisateurs. Sans clé Prowlarr personnelle, vous bénéficiez du cache mutualisé, sans recherche à la demande.
+  - **Budget borné** : une recherche à la demande ne dépasse jamais le réglage **Admin → Paramètres → « Budget d'une recherche Prowlarr à la demande »** (défaut 8 s), tentatives de repli comprises.
+  - **Disjoncteur** : après 3 échecs consécutifs, l'instance est mise en pause 10 min (plus aucune requête) au lieu de ralentir chaque zap ; le compteur repart au premier succès.
 - **Intégration Lumio** : Option pour enrichir les flux instantanés à la demande via votre manifest perso Lumio.
 - **Intégration Torrentio** : Collez l'URL de manifest Torrentio **contenant vos filtres** (Taille, Seed, Langue, Résolutions) ; l'addon récupère les torrents en cache et lit avec **votre propre clé AllDebrid/Torbox** (le débridage doit rester désactivé côté Torrentio). Cloudflare renvoyant un **403** aux IP de serveur, le proxy **WARP** est utilisé automatiquement (repli direct), et une instance Torrentio **auto-hébergée** est également acceptée.
   - **Diagnostic** : en cas d'échec, le test affiche le résultat de **chaque tentative** (ex. `tentatives : proxy:403 • direct:403`) — vous savez immédiatement si c'est le proxy ou l'IP du serveur qui est bloqué.
