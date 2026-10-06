@@ -1028,8 +1028,12 @@ test("Catalogs - disableCatalogs hides catalogs from manifest and catalog route"
         0,
         "Les catalogues doivent être complètement vides dans le manifest"
     );
+    // Les ressources sont désormais déclarées en notation objet (idPrefixes par ressource).
+    const resourceName = r => (typeof r === "string" ? r : r && r.name);
+    const getResource = (manifest, name) => manifest.resources.find(r => resourceName(r) === name);
+
     assert.ok(
-        !manifestDisabled.resources.includes("catalog"),
+        !manifestDisabled.resources.some(r => resourceName(r) === "catalog"),
         "La ressource catalog ne doit pas être présente si désactivée"
     );
 
@@ -1045,8 +1049,41 @@ test("Catalogs - disableCatalogs hides catalogs from manifest and catalog route"
         manifestDefault.catalogs.length > 0,
         "Les catalogues doivent être activés par défaut avec une config vide"
     );
-    assert.ok(manifestDefault.resources.includes("catalog"), "La ressource catalog doit être déclarée par défaut");
-    assert.ok(manifestDefault.resources.includes("meta"), "La ressource meta doit être déclarée par défaut");
+    assert.ok(
+        manifestDefault.resources.some(r => resourceName(r) === "catalog"),
+        "La ressource catalog doit être déclarée par défaut"
+    );
+    assert.ok(
+        manifestDefault.resources.some(r => resourceName(r) === "meta"),
+        "La ressource meta doit être déclarée par défaut"
+    );
+
+    // Les ressources doivent être des OBJETS : AIOStreams avertit « addon provides no idPrefixes »
+    // quand une ressource n'expose pas ses idPrefixes (notation abrégée par chaîne).
+    const metaResource = getResource(manifestDefault, "meta");
+    const streamResource = getResource(manifestDefault, "stream");
+    const catalogResource = getResource(manifestDefault, "catalog");
+
+    assert.ok(metaResource && typeof metaResource === "object", "La ressource meta doit être un objet");
+    assert.ok(
+        Array.isArray(metaResource.idPrefixes) && metaResource.idPrefixes.length > 0,
+        "La ressource meta doit déclarer ses idPrefixes"
+    );
+    assert.deepEqual(
+        metaResource.idPrefixes,
+        streamResource.idPrefixes,
+        "meta et stream doivent exposer exactement les mêmes idPrefixes"
+    );
+    for (const prefix of ["tt", "kitsu", "ad_cloud:", "tb_cloud:"]) {
+        assert.ok(metaResource.idPrefixes.includes(prefix), `meta doit déclarer le préfixe ${prefix}`);
+    }
+    assert.deepEqual(metaResource.types, ["movie", "series", "anime"], "meta doit déclarer ses types");
+    assert.equal(
+        catalogResource.idPrefixes,
+        undefined,
+        "catalog ne doit pas déclarer d'idPrefixes (sans objet pour cette ressource)"
+    );
+    assert.deepEqual(manifestDefault.types, ["movie", "series", "anime"], "Le manifeste doit déclarer ses types");
 
     // 3. Appel de handleCatalog avec disableCatalogs actif
     const catalogResult = await handleCatalog({ disableCatalogs: true }, "movie", "my_ad_magnets");
