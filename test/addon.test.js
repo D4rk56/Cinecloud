@@ -3,11 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-    parseSeasonEpisode,
-    parseSizeFromString,
-    extractCleanTitle
-} = require("../lib/helpers");
+const { parseSeasonEpisode, parseSizeFromString, extractCleanTitle } = require("../lib/helpers");
 
 const { hashPassword, verifyPassword, encryptConfig, decryptConfig } = require("../lib/crypto");
 
@@ -782,10 +778,7 @@ test("Helpers - formatAioStream removes FR SUB badge and displays filename in ri
     const lines = formatted.title.split("\n");
     assert.equal(lines.length, 4, "Le titre doit comporter exactement 4 lignes");
     assert.ok(lines[1].includes("Gladiator"), "La ligne titre doit contenir le nom épuré");
-    assert.ok(
-        formatted.title.includes("☁️ Cloud personnel"),
-        "La source Cloud doit rester visible"
-    );
+    assert.ok(formatted.title.includes("☁️ Cloud personnel"), "La source Cloud doit rester visible");
 });
 
 test("Helpers - filterAndSortStreams filters by resolution, language and limits", () => {
@@ -1155,10 +1148,7 @@ test("Helpers - formatAioStream handles isInstant with ⚡, 🔍 and ⏳ badges"
     });
     assert.ok(instantStream.name.includes("[AD ⚡]"), "Doit inclure le badge [AD ⚡]");
     assert.ok(!instantStream.name.includes("[AD ⏳]"), "Ne doit pas inclure [AD ⏳]");
-    assert.ok(
-        instantStream.title.includes("⚡ IMMÉDIAT"),
-        "Doit inclure le statut normalisé ⚡ IMMÉDIAT"
-    );
+    assert.ok(instantStream.title.includes("⚡ IMMÉDIAT"), "Doit inclure le statut normalisé ⚡ IMMÉDIAT");
 
     // Flux Prowlarr non confirmé en cache (isInstant: false, indexer: Prowlarr) -> Badge [AD 🔍]
     const prowlarrStream = formatAioStream({
@@ -1389,10 +1379,7 @@ test("Helpers - formatAioStream unifie les statuts instantanes en ⚡ IMMÉDIAT"
             isInstant: true
         });
         assert.ok(s.name.includes("[AD ⚡]"), `Badge unifié [AD ⚡] pour ${cacheType}`);
-        assert.ok(
-            s.title.split("\n")[0] === "⚡ IMMÉDIAT",
-            `Ligne statut normalisée pour ${cacheType}`
-        );
+        assert.ok(s.title.split("\n")[0] === "⚡ IMMÉDIAT", `Ligne statut normalisée pour ${cacheType}`);
     }
 });
 
@@ -2449,10 +2436,7 @@ test("Helpers & Cloud - formatAioStream handles Exit 8 WEB release with proper q
 
     // 4. Source et Statut sans doublon
     assert.ok(formatted.title.includes("☁️ Cloud personnel"), "Ligne de provenance Cloud personnel");
-    assert.ok(
-        formatted.title.split("\n")[0] === "☁️ CLOUD • ⚡ IMMÉDIAT",
-        "Ligne de statut Cloud normalisée"
-    );
+    assert.ok(formatted.title.split("\n")[0] === "☁️ CLOUD • ⚡ IMMÉDIAT", "Ligne de statut Cloud normalisée");
     assert.equal(
         formatted.title.includes("Cloud personnel\n⚡ Cloud personnel"),
         false,
@@ -2469,10 +2453,7 @@ test("Helpers & Cloud - formatAioStream handles Exit 8 WEB release with proper q
     });
     assert.ok(formattedTb.name.includes("[TB ☁️]"), "Badge [TB ☁️] attendu pour Torbox");
     assert.ok(formattedTb.title.includes("☁️ Cloud personnel"), "Source Cloud personnel");
-    assert.ok(
-        formattedTb.title.split("\n")[0] === "☁️ CLOUD • ⚡ IMMÉDIAT",
-        "Statut Cloud normalisé"
-    );
+    assert.ok(formattedTb.title.split("\n")[0] === "☁️ CLOUD • ⚡ IMMÉDIAT", "Statut Cloud normalisé");
 });
 
 test("Helpers & Catalogs - extractCleanTitle and parseSeasonEpisode handle parentheses, technical tags, and animes", () => {
@@ -3859,10 +3840,7 @@ test("Stremio Streams - handleStream with active AllDebrid pre-validation displa
 
         assert.ok(readyStream, "Le flux ready doit être présent");
         assert.ok(readyStream.name.includes("⚡"), "Le flux ready doit porter l'éclair ⚡");
-        assert.ok(
-            readyStream.title.includes("⚡ IMMÉDIAT"),
-            "Le statut ready doit être normalisé ⚡ IMMÉDIAT"
-        );
+        assert.ok(readyStream.title.includes("⚡ IMMÉDIAT"), "Le statut ready doit être normalisé ⚡ IMMÉDIAT");
 
         assert.ok(unreadyStream, "Le flux unready doit être présent");
         assert.ok(unreadyStream.name.includes("⏳"), "Le flux unready doit porter le sablier ⏳");
@@ -4563,10 +4541,7 @@ test("Helpers - formatAioStream badges et provenance Torrentio", () => {
     });
     assert.ok(instant.name.includes("[AD ⚡ Torrentio]"), "Badge instantané Torrentio (statusTag conservé)");
     assert.ok(instant.title.includes("🚀 Torrentio (1337x)"), "Ligne de provenance Torrentio (indexer)");
-    assert.ok(
-        instant.title.split("\n")[0] === "⚡ IMMÉDIAT",
-        "Statut normalisé ⚡ IMMÉDIAT"
-    );
+    assert.ok(instant.title.split("\n")[0] === "⚡ IMMÉDIAT", "Statut normalisé ⚡ IMMÉDIAT");
 
     const notInstant = formatAioStream({
         filename: "Film.2024.1080p.WEB-DL.mkv",
