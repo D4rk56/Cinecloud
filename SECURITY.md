@@ -96,7 +96,7 @@ CinéCloud FR est conçu selon le principe de **défense en profondeur** (_defen
   **jamais réémise** telle quelle. Elle est tokenisée, filtrée par une **liste blanche close**, puis
   reconstruite — tout texte étant échappé.
   - Balises autorisées uniquement : `p, div, span, br, hr, strong, b, em, i, u, s, small, ul, ol, li,
-    blockquote, code, pre, h1…h6, figure, figcaption, table, thead, tbody, tr, td, th, a, img`.
+blockquote, code, pre, h1…h6, figure, figcaption, table, thead, tbody, tr, td, th, a, img`.
     **Aucun** `script`, `iframe`, `object`, `embed`, `form`, `style`, `link`, `meta`, `base`, `svg`.
   - Attributs autorisés uniquement : `href`, `title` (liens) et `src`, `alt`, `title`, `width`,
     `height`, `loading` (images). **Aucun** `on*`, `style`, `class`, `id`, `srcset`.

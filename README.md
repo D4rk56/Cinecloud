@@ -141,16 +141,16 @@ server {
 
 ## ⚙️ Variables d'Environnement
 
-| Variable           | Description                                             | Valeur par défaut                    |
-| :----------------- | :------------------------------------------------------ | :----------------------------------- |
-| `PORT`             | Port d'écoute HTTP du serveur                           | `3000`                               |
-| `NODE_ENV`         | Environnement d'exécution                               | `production`                         |
-| `TRUST_PROXY`      | Confiance aux en-têtes `X-Forwarded-*` (`true`/`false`/entier) | `false`                         |
-| `WARP_PROXY`       | Adresse du proxy WARP sortant (HTTP ou SOCKS5)          | `http://warp:1080`                   |
-| `APP_SECRET`       | Clé secrète AES-256-GCM pour le chiffrement des données | _Générée automatiquement si absente_ |
-| `ADMIN_PASSWORD`   | Mot de passe d'accès au panneau `/admin`                | _Généré automatiquement si absent_   |
-| `PROWLARR_URL`     | URL de votre instance Prowlarr globale (optionnel)      | `http://prowlarr:9696`               |
-| `PROWLARR_KEY`     | Clé API de votre instance Prowlarr globale (optionnel)  | _Vide_                               |
+| Variable         | Description                                                    | Valeur par défaut                    |
+| :--------------- | :------------------------------------------------------------- | :----------------------------------- |
+| `PORT`           | Port d'écoute HTTP du serveur                                  | `3000`                               |
+| `NODE_ENV`       | Environnement d'exécution                                      | `production`                         |
+| `TRUST_PROXY`    | Confiance aux en-têtes `X-Forwarded-*` (`true`/`false`/entier) | `false`                              |
+| `WARP_PROXY`     | Adresse du proxy WARP sortant (HTTP ou SOCKS5)                 | `http://warp:1080`                   |
+| `APP_SECRET`     | Clé secrète AES-256-GCM pour le chiffrement des données        | _Générée automatiquement si absente_ |
+| `ADMIN_PASSWORD` | Mot de passe d'accès au panneau `/admin`                       | _Généré automatiquement si absent_   |
+| `PROWLARR_URL`   | URL de votre instance Prowlarr globale (optionnel)             | `http://prowlarr:9696`               |
+| `PROWLARR_KEY`   | Clé API de votre instance Prowlarr globale (optionnel)         | _Vide_                               |
 
 > **Note** : les timeouts HTTP AllDebrid et Prowlarr ne se règlent **pas** par variable d'environnement mais depuis le panneau d'administration (`/admin` → Paramètres), puis enregistrés en base.
 

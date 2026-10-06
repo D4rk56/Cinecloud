@@ -163,8 +163,7 @@ function isOriginAllowed(origin, reqHost) {
         .split(",")
         .map(o => o.trim().toLowerCase())
         .filter(Boolean);
-    const isCustomAllowed =
-        customAllowed.includes(origin.toLowerCase()) || customAllowed.includes(originHost);
+    const isCustomAllowed = customAllowed.includes(origin.toLowerCase()) || customAllowed.includes(originHost);
     return isSameHost || isLocal || isCustomAllowed;
 }
 
@@ -203,9 +202,25 @@ app.use((req, res, next) => {
 
 // Configuration CORS stricte et contextualisée
 app.use((req, res, next) => {
-    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-
     const pathUrl = req.path || "";
+
+    // Politique de cache :
+    //  - manifest.json et meta/ : réponses stables et sans secret de session →
+    //    Stremio peut les conserver quelques minutes. Le chemin contient l'UUID
+    //    de l'utilisateur, donc la clé de cache est déjà isolée par addon.
+    //  - stream/ et /resolve/ : URLs signées et dynamiques → jamais de cache.
+    //  - tout le reste (pages HTML, /api/*) : no-store, aucune donnée de
+    //    session dans un proxy partagé.
+    const isCacheable =
+        pathUrl.endsWith("/manifest.json") ||
+        pathUrl.includes("/meta/") ||
+        pathUrl === "/logo.png" ||
+        pathUrl === "/background.png";
+    if (isCacheable) {
+        res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
+    } else {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    }
 
     // 1. Routes Stremio publiques & assets : CORS ouvert pour compatibilité Web Stremio et lecteurs externes
     const isStremioRoute =
@@ -529,8 +544,7 @@ app.post("/api/user/login", authLimiter, validateAdmin({ body: userLoginSchema }
                 sortBy: config.sortBy || "quality",
                 maxSizeGb: config.maxSizeGb !== undefined ? config.maxSizeGb : 150,
                 maxStreams: config.maxStreams || 0,
-                prioritizeCloud:
-                    config.prioritizeCloud !== undefined ? Boolean(config.prioritizeCloud) : true,
+                prioritizeCloud: config.prioritizeCloud !== undefined ? Boolean(config.prioritizeCloud) : true,
                 prowlarrUrl: config.prowlarrUrl || "http://prowlarr:9696",
                 prowlarrKey: config.prowlarrKey || "",
                 prowlarrMode: user.prowlarrMode || config.prowlarrMode || "local",
@@ -887,31 +901,36 @@ app.post("/api/user/delete", authLimiter, validateAdmin({ body: userDeleteSchema
 });
 
 // Nettoyage des magnets AllDebrid bloqués pour un utilisateur
-app.post("/api/user/cleanup-magnets", authLimiter, validateAdmin({ body: userCleanupMagnetsSchema }), async (req, res) => {
-    try {
-        const { uuid, password } = req.body;
-        if (!uuid || !password) {
-            return res.status(400).json({ error: "UUID et mot de passe requis." });
-        }
+app.post(
+    "/api/user/cleanup-magnets",
+    authLimiter,
+    validateAdmin({ body: userCleanupMagnetsSchema }),
+    async (req, res) => {
+        try {
+            const { uuid, password } = req.body;
+            if (!uuid || !password) {
+                return res.status(400).json({ error: "UUID et mot de passe requis." });
+            }
 
-        const user = getUserByUuid(uuid.trim());
-        if (!user || !verifyPassword(password, user.passwordHash)) {
-            return res.status(401).json({ error: "UUID ou mot de passe incorrect." });
-        }
+            const user = getUserByUuid(uuid.trim());
+            if (!user || !verifyPassword(password, user.passwordHash)) {
+                return res.status(401).json({ error: "UUID ou mot de passe incorrect." });
+            }
 
-        const config = decryptConfig(user.configEncrypted);
-        const apiKey = config?.apiKey;
-        if (!apiKey) {
-            return res.status(400).json({ error: "Aucune clé AllDebrid configurée pour cet utilisateur." });
-        }
+            const config = decryptConfig(user.configEncrypted);
+            const apiKey = config?.apiKey;
+            if (!apiKey) {
+                return res.status(400).json({ error: "Aucune clé AllDebrid configurée pour cet utilisateur." });
+            }
 
-        const result = await alldebrid.cleanupPendingMagnets(apiKey);
-        return res.json(result);
-    } catch (err) {
-        console.error("[User] Erreur cleanup-magnets :", err.message);
-        return res.status(500).json({ error: "Erreur lors du nettoyage des magnets AllDebrid." });
+            const result = await alldebrid.cleanupPendingMagnets(apiKey);
+            return res.json(result);
+        } catch (err) {
+            console.error("[User] Erreur cleanup-magnets :", err.message);
+            return res.status(500).json({ error: "Erreur lors du nettoyage des magnets AllDebrid." });
+        }
     }
-});
+);
 
 // =============================================================================
 // 2. ENDPOINTS PUBLICS DE STATUT & VÉRIFICATION

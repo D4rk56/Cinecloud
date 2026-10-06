@@ -17,12 +17,7 @@ const {
     cacheClearSchema,
     cleanupMagnetsSchema
 } = require("../lib/admin-schemas");
-const {
-    sanitizeEmbedHtml,
-    isSafeEmbedUrl,
-    isSafeDiscordUrl,
-    normalizeSiteSettings
-} = require("../lib/sanitize");
+const { sanitizeEmbedHtml, isSafeEmbedUrl, isSafeDiscordUrl, normalizeSiteSettings } = require("../lib/sanitize");
 
 test("Task 1 - .env.example complet et validation au boot (fail-fast)", () => {
     // 1. Présence et complétude de .env.example
@@ -461,7 +456,7 @@ test("Assainissement - validation des URL d'embed et du bouton Discord", () => {
 
 test("Assainissement - normalizeSiteSettings neutralise les valeurs invalides", () => {
     const normalized = normalizeSiteSettings({
-        embedHtml: '<p>ok</p><script>alert(1)</script>',
+        embedHtml: "<p>ok</p><script>alert(1)</script>",
         embedIframeUrl: "javascript:alert(1)",
         embedIframeHeight: 99999,
         discordUrl: "https://evil.tld/x",
@@ -493,16 +488,16 @@ test("Assainissement - le schéma des paramètres borne la personnalisation", ()
         torrentioEgress: "direct"
     });
     assert.equal(valid.success, true, "Les champs de personnalisation doivent être acceptés");
-    assert.equal(
-        settingsSchema.safeParse({ torrentioEgress: "auto" }).success,
-        true,
-        "torrentioEgress=auto accepté"
-    );
+    assert.equal(settingsSchema.safeParse({ torrentioEgress: "auto" }).success, true, "torrentioEgress=auto accepté");
 
     assert.equal(settingsSchema.safeParse({ embedHtml: "a".repeat(4001) }).success, false, "Embed trop long refusé");
     assert.equal(settingsSchema.safeParse({ embedIframeUrl: "https://x.tld/" + "a".repeat(500) }).success, false);
     assert.equal(settingsSchema.safeParse({ embedIframeHeight: 10 }).success, false, "Hauteur trop petite refusée");
     assert.equal(settingsSchema.safeParse({ embedIframeHeight: 5000 }).success, false, "Hauteur trop grande refusée");
-    assert.equal(settingsSchema.safeParse({ torrentioEgress: "warp" }).success, false, "Valeur d'egress inconnue refusée");
+    assert.equal(
+        settingsSchema.safeParse({ torrentioEgress: "warp" }).success,
+        false,
+        "Valeur d'egress inconnue refusée"
+    );
     assert.equal(settingsSchema.safeParse({ champInconnu: 1 }).success, false, "Schéma strict : champ inconnu refusé");
 });

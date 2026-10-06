@@ -1435,7 +1435,11 @@ test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async 
         const streamUrl = await getTorboxStreamUrl(1234, 5, "my_test_torbox_key");
         assert.equal(streamUrl, "https://storage.torbox.app/cdn/video.mp4");
         assert.ok(capturedUrl && capturedUrl.includes("/torrents/requestdl"), "Doit appeler requestdl");
-        assert.equal(capturedConfig.params.token, "my_test_torbox_key", "Le token doit être en query (exigence API Torbox)");
+        assert.equal(
+            capturedConfig.params.token,
+            "my_test_torbox_key",
+            "Le token doit être en query (exigence API Torbox)"
+        );
         assert.equal(capturedConfig.params.torrent_id, 1234);
         assert.equal(capturedConfig.params.file_id, 5);
         assert.equal(capturedConfig.params.redirect, false, "redirect doit être un booléen");
@@ -2859,13 +2863,27 @@ test("Catalogs - my_ad_history_series with real SQLite loadCache never throws un
             if (/breaking/i.test(decodeURIComponent(u))) {
                 return {
                     data: {
-                        metas: [{ id: "tt0903747", imdb_id: "tt0903747", name: "Breaking Bad", poster: "https://poster-bb.jpg" }]
+                        metas: [
+                            {
+                                id: "tt0903747",
+                                imdb_id: "tt0903747",
+                                name: "Breaking Bad",
+                                poster: "https://poster-bb.jpg"
+                            }
+                        ]
                     }
                 };
             }
             return {
                 data: {
-                    metas: [{ id: "tt29277873", imdb_id: "tt29277873", name: "Sousou no Frieren", poster: "https://poster.jpg" }]
+                    metas: [
+                        {
+                            id: "tt29277873",
+                            imdb_id: "tt29277873",
+                            name: "Sousou no Frieren",
+                            poster: "https://poster.jpg"
+                        }
+                    ]
                 }
             };
         }
@@ -4222,7 +4240,7 @@ test("UI - embed sous le titre assaini et bouton Discord conditionnel", () => {
 
     // 2. HTML dangereux + URL invalides + Discord valide
     const html = renderConfigPage("register", "", {
-        embedHtml: '<p>Hello</p><script>alert(1)</script><img src=x onerror=alert(2)>',
+        embedHtml: "<p>Hello</p><script>alert(1)</script><img src=x onerror=alert(2)>",
         embedIframeUrl: "javascript:alert(1)",
         discordUrl: "https://discord.gg/abc"
     });
@@ -4289,8 +4307,13 @@ test("Security - Rate Limiting on /api/check endpoints (apiCheckLimiter)", async
 });
 
 test("Helpers - artefacts (sample/bonus/zip) exclus et packs COMPLETE détectés", () => {
-    const { isRealVideoFile, isExcludedArtifact, isCompleteSeriesPack, NON_VIDEO_EXT_RE, parseSeasonEpisode } =
-        require("../lib/helpers");
+    const {
+        isRealVideoFile,
+        isExcludedArtifact,
+        isCompleteSeriesPack,
+        NON_VIDEO_EXT_RE,
+        parseSeasonEpisode
+    } = require("../lib/helpers");
 
     // 1. isRealVideoFile : rejette les contenus annexes même en extension vidéo
     for (const name of [
@@ -4423,9 +4446,13 @@ test("Catalogues - artefacts (sample/bonus/zip/srt) exclus de l'historique", asy
         const u = decodeURIComponent(typeof url === "string" ? url : "");
         if (u.includes("cinemeta.strem.io/catalog/movie")) {
             if (/sample/i.test(u))
-                return { data: { metas: [{ id: "tt1111111", imdb_id: "tt1111111", name: "Sample Only", year: "2024" }] } };
+                return {
+                    data: { metas: [{ id: "tt1111111", imdb_id: "tt1111111", name: "Sample Only", year: "2024" }] }
+                };
             if (/bonus/i.test(u))
-                return { data: { metas: [{ id: "tt2222222", imdb_id: "tt2222222", name: "Bonus Only", year: "2024" }] } };
+                return {
+                    data: { metas: [{ id: "tt2222222", imdb_id: "tt2222222", name: "Bonus Only", year: "2024" }] }
+                };
             if (/trailer/i.test(u))
                 return {
                     data: { metas: [{ id: "tt3333333", imdb_id: "tt3333333", name: "Trailer Only", year: "2024" }] }
@@ -4630,10 +4657,7 @@ test("Torbox - 422 requestdl : le détail est remonté et la cible mise en quara
         // extractTorboxError gère les deux formes du champ detail
         assert.equal(extractTorboxError({ response: { data: { detail: "Bad token" } } }), "Bad token");
         assert.equal(extractTorboxError({ message: "boom" }), "boom");
-        assert.equal(
-            extractTorboxError({ response: { data: { error: "BAD_TOKEN", detail: "invalid" } } }),
-            "invalid"
-        );
+        assert.equal(extractTorboxError({ response: { data: { error: "BAD_TOKEN", detail: "invalid" } } }), "invalid");
     } finally {
         torboxApi.get = origGet;
         console.warn = origWarn;
@@ -4729,9 +4753,7 @@ test("Torbox - les torrents cloud non téléchargés ne produisent aucun flux", 
             "test-user"
         );
 
-        const tbCloudUrls = (result.streams || [])
-            .map(s => String(s.url || ""))
-            .filter(u => u.includes("tb_cloud:"));
+        const tbCloudUrls = (result.streams || []).map(s => String(s.url || "")).filter(u => u.includes("tb_cloud:"));
 
         assert.ok(tbCloudUrls.length > 0, "Le torrent terminé doit produire un flux cloud");
         assert.ok(
@@ -4755,19 +4777,13 @@ test("UI Admin - le filtre de type de log fonctionne même en pause", () => {
     const { renderAdminPage } = require("../lib/ui");
     const html = renderAdminPage();
 
-    assert.ok(
-        html.includes("async function loadLogs(force = false)"),
-        "loadLogs doit accepter un paramètre force"
-    );
+    assert.ok(html.includes("async function loadLogs(force = false)"), "loadLogs doit accepter un paramètre force");
     assert.ok(html.includes("if (isLogsPaused && !force) return;"), "La pause ne doit bloquer que l'auto-refresh");
     assert.ok(
         html.includes('id="logLevelFilter" onchange="loadLogs(true)"'),
         "Le filtre de type de log doit forcer le rafraîchissement"
     );
-    assert.ok(
-        html.includes('onclick="loadLogs(true)"'),
-        "Le bouton Actualiser doit forcer le rafraîchissement"
-    );
+    assert.ok(html.includes('onclick="loadLogs(true)"'), "Le bouton Actualiser doit forcer le rafraîchissement");
     assert.ok(
         html.includes("if (adminToken && !isLogsPaused) loadLogs();"),
         "L'auto-refresh doit rester suspendu en pause"
@@ -4941,10 +4957,7 @@ test("MAX_CLASSIFY - un historique surdimensionne est plafonne (protection satur
         // Le cache de classification contient exactement 1 entrée par élément
         // effectivement soumis à classifyContent (clé `v2:link:<lien>`).
         const classifiedKeys = Object.keys(cache.classification || {});
-        assert.ok(
-            classifiedKeys.length > 0,
-            "Au moins un élément doit avoir été soumis à la classification"
-        );
+        assert.ok(classifiedKeys.length > 0, "Au moins un élément doit avoir été soumis à la classification");
         assert.ok(
             classifiedKeys.length <= 200,
             `Le nombre d'éléments classifiés doit rester plafonné à 200 (obtenu ${classifiedKeys.length} pour 600 liens)`
@@ -4954,5 +4967,146 @@ test("MAX_CLASSIFY - un historique surdimensionne est plafonne (protection satur
     } finally {
         alldebrid.adGet = originalAdGet;
         axios.get = originalAxiosGet;
+    }
+});
+
+test("Revalidation P1 - conserve le badge reel, retire le badge obsolete", async () => {
+    const { revalidateStaleInstantTorrents } = require("../lib/prowlarr-worker");
+    const { upsertCachedTorrent, getCachedTorrentsByImdb, deleteCachedTorrent } = require("../lib/db");
+    const alldebrid = require("../lib/alldebrid");
+    const torbox = require("../lib/torbox");
+
+    // Hashes connus : « KEPT » doit conserver son badge, « STALE » le perdre.
+    const HASH_KEPT = "aaaaaaaa111111112222222233333333aaaa0001";
+    const HASH_STALE = "bbbbbbbb111111112222222233333333bbbb0002";
+    const KEPT_IMDB = "tt9000001";
+    const STALE_IMDB = "tt9000002";
+
+    const prevAdKey = process.env.ALLDEBRID_API_KEY;
+    const prevTbKey = process.env.TORBOX_API_KEY;
+    const originalAdGet = alldebrid.adGet;
+    const originalTorboxGet = torbox.torboxApi.get;
+
+    upsertCachedTorrent({
+        infoHash: HASH_KEPT,
+        imdbId: KEPT_IMDB,
+        title: "Kept",
+        filename: "Kept.2024.1080p.mkv",
+        size: 100,
+        indexer: "Prowlarr",
+        seeders: 10,
+        isInstant: 1
+    });
+    upsertCachedTorrent({
+        infoHash: HASH_STALE,
+        imdbId: STALE_IMDB,
+        title: "Stale",
+        filename: "Stale.2024.720p.mkv",
+        size: 100,
+        indexer: "Prowlarr",
+        seeders: 10,
+        isInstant: 1
+    });
+
+    process.env.ALLDEBRID_API_KEY = "ad_test_key_for_revalidation";
+    process.env.TORBOX_API_KEY = "tb_test_key_for_revalidation";
+
+    // AllDebrid reconnait TOUS les hashes sauf HASH_STALE : c'est la réponse
+    // négative explicite qui autorise une rétrogradation.
+    alldebrid.adGet = async (endpoint, apiKey, params) => {
+        if (String(endpoint).includes("instant")) {
+            const magnets = (params && params.magnets) || [];
+            const items = magnets.map(uri => {
+                const h = String(uri).match(/btih:([0-9a-f]{40})/i);
+                const hash = h ? h[1].toLowerCase() : "";
+                return { hash, instant: hash !== HASH_STALE };
+            });
+            return { data: { status: "success", data: { magnets: items } } };
+        }
+        return { data: { status: "error" } };
+    };
+
+    // Torbox ne signale aucun torrent : il ne doit rien rétrograder lui-même.
+    torbox.torboxApi.get = async () => ({ data: { success: true, data: {} } });
+
+    try {
+        const res = await revalidateStaleInstantTorrents(50);
+        assert.ok(typeof res.checked === "number" && res.checked > 0, "Au moins une entrée doit être revalidée");
+        assert.ok(res.demoted > 0, "La sortie obsolete doit etre retrogradee (badge retire)");
+        assert.equal(
+            getCachedTorrentsByImdb(STALE_IMDB)[0]?.isInstant,
+            0,
+            "Le badge doit disparaitre pour un torrent absent du cache AllDebrid"
+        );
+        assert.equal(
+            getCachedTorrentsByImdb(KEPT_IMDB)[0]?.isInstant,
+            1,
+            "Le badge doit survivre pour un torrent toujours present dans le cache"
+        );
+    } finally {
+        if (prevAdKey === undefined) delete process.env.ALLDEBRID_API_KEY;
+        else process.env.ALLDEBRID_API_KEY = prevAdKey;
+        if (prevTbKey === undefined) delete process.env.TORBOX_API_KEY;
+        else process.env.TORBOX_API_KEY = prevTbKey;
+        alldebrid.adGet = originalAdGet;
+        torbox.torboxApi.get = originalTorboxGet;
+        deleteCachedTorrent(HASH_KEPT);
+        deleteCachedTorrent(HASH_STALE);
+    }
+});
+
+test("Revalidation P1 - sans reponse exploitable des debrideurs, aucun badge n'est retire", async () => {
+    const { revalidateStaleInstantTorrents } = require("../lib/prowlarr-worker");
+    const { upsertCachedTorrent, getCachedTorrentsByImdb, deleteCachedTorrent } = require("../lib/db");
+    const alldebrid = require("../lib/alldebrid");
+    const torbox = require("../lib/torbox");
+
+    const HASH = "cccccccc111111112222222233333333cccc0003";
+    const IMDB = "tt9000003";
+    const prevAdKey = process.env.ALLDEBRID_API_KEY;
+    const prevTbKey = process.env.TORBOX_API_KEY;
+    const originalAdGet = alldebrid.adGet;
+    const originalTorboxGet = torbox.torboxApi.get;
+
+    upsertCachedTorrent({
+        infoHash: HASH,
+        imdbId: IMDB,
+        title: "NoAnswer",
+        filename: "NoAnswer.2024.1080p.mkv",
+        size: 100,
+        indexer: "Prowlarr",
+        seeders: 10,
+        isInstant: 1
+    });
+
+    process.env.ALLDEBRID_API_KEY = "ad_test_key";
+    process.env.TORBOX_API_KEY = "tb_test_key";
+
+    // Simule une API en panne (ou un cache vide) : `checkInstantMagnets` n'élève
+    // jamais d'erreur, il renvoie un dictionnaire vide. Sans le garde `gotAnswers`,
+    // chaque hash devenait « absent » et TOUS les badges étaient retirés pendant
+    // la coupure réseau.
+    alldebrid.adGet = async endpoint => {
+        if (String(endpoint).includes("instant")) {
+            return { data: { status: "success", data: { magnets: [] } } };
+        }
+        return { data: { status: "error" } };
+    };
+    torbox.torboxApi.get = async () => ({ data: { success: true, data: {} } });
+
+    try {
+        const res = await revalidateStaleInstantTorrents(50);
+        assert.equal(res.demoted, 0, "Aucune retrogradation sans reponse exploitable");
+        const row = getCachedTorrentsByImdb(IMDB).find(r => (r.infoHash || "").toLowerCase() === HASH);
+        assert.ok(row, "L'entree de test doit toujours etre presente");
+        assert.equal(row.isInstant, 1, "Le badge doit survivre a une coupure des debrideurs");
+    } finally {
+        if (prevAdKey === undefined) delete process.env.ALLDEBRID_API_KEY;
+        else process.env.ALLDEBRID_API_KEY = prevAdKey;
+        if (prevTbKey === undefined) delete process.env.TORBOX_API_KEY;
+        else process.env.TORBOX_API_KEY = prevTbKey;
+        alldebrid.adGet = originalAdGet;
+        torbox.torboxApi.get = originalTorboxGet;
+        deleteCachedTorrent(HASH);
     }
 });
