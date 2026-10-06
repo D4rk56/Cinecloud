@@ -1292,7 +1292,15 @@ app.get("/:uuid/stream/:type/:id.json", async (req, res) => {
     try {
         const protocol = getRequestProtocol(req);
         const baseUrl = `${protocol}://${req.get("host")}`;
+        const startedAt = Date.now();
         const result = await handleStream(config, req.params.type, req.params.id, cache, baseUrl, req.params.uuid);
+        // Latence visible dans le journal admin : permet de la comparer au « Timeout » par addon
+        // d'AIOStreams (au-delà, l'agrégateur abandonne la requête et n'affiche aucun résultat).
+        console.log(
+            `[Stream] ${req.params.type}/${req.params.id} → ${
+                Array.isArray(result.streams) ? result.streams.length : 0
+            } flux en ${Date.now() - startedAt} ms`
+        );
         res.json(result);
     } catch (err) {
         console.error(`[Stream] Erreur ${req.params.id}:`, err.message);

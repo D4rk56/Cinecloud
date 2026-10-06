@@ -4517,6 +4517,19 @@ test("Torrentio - les infoHash sont résolus avec la clé de l'addon (jamais l'U
             torrentioStreams.some(s => String(s.title || "").includes("🚀 Torrentio")),
             "La provenance Torrentio doit être affichée"
         );
+
+        // Les flux réellement servis doivent exposer un behaviorHints exploitable par AIOStreams
+        // (sans lui, l'agrégateur parse notre titre et ses filtres éliminent les résultats).
+        const withHints = result.streams.filter(s => s.behaviorHints && s.behaviorHints.service);
+        assert.equal(withHints.length, result.streams.length, "Chaque flux doit exposer behaviorHints.service");
+        assert.ok(
+            withHints.every(s => s.behaviorHints.service === "alldebrid"),
+            "Le service AllDebrid doit être déclaré explicitement"
+        );
+        assert.ok(
+            withHints.some(s => s.behaviorHints.filename && s.behaviorHints.cached === false),
+            "Un flux Torrentio non instantané doit annoncer son nom de release et cached=false"
+        );
     } finally {
         axios.get = originalGet;
         alldebrid.adGet = originalAdGet;

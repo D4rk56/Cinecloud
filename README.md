@@ -55,6 +55,19 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
   - **Gauche :** `[AD ⚡]` ou `[TB ⚡]` + Résolution (`4K ⭐`, `1080p ⭐`, etc.).
   - **Droite (4 lignes) :** statut (`⚡ IMMÉDIAT`, `⏳ TÉLÉCHARGEMENT`, `🔍 À VÉRIFIER`), titre propre, détails vidéo/audio fusionnés, langues (`🇫🇷` `🌐` `VOSTFR`) + source (`| YGG • FW`).
 
+### 🔗 Utilisation derrière AIOStreams (et autres agrégateurs)
+
+Les flux exposent un `behaviorHints` complet (`filename`, `videoSize`, `seeders`, `indexer`, `service`, `cached`) afin que les agrégateurs les **parsent correctement** (résolution, qualité, langue, taille) et les classent comme flux **débridés** avec leur statut de cache.
+
+**Si rien ne s'affiche dans AIOStreams**, vérifiez dans cet ordre :
+
+1. **Addons → Cinécloud → `Timeout`** : c'est le temps maximal accordé à l'addon. L'augmenter (ex. 20–30 s). Le journal admin affiche la latence réelle de chaque requête :
+   `[Stream] movie/tt1375666 → 42 flux en 1840 ms`.
+2. **Filters → Cache** : nos flux déclarent désormais `cached: true` (⚡ cache AllDebrid/Torbox, cloud personnel) ou `false` (« ⏳ Téléchargement », « 🔍 Vérif. au clic »). Ne pas exclure la catégorie _uncached_ si vous voulez les voir.
+3. **Filters → Generic Stream Attributes** : un filtre **`Resolution` / `Language` / `Quality` en mode _Required_** est la cause la plus fréquente de disparition totale — vérifiez qu'il correspond bien à ce que vous cherchez.
+4. **Filters → Result Limits / Deduplicator** : un dédoublonnage par `filename` trop agressif peut réduire la liste à un seul flux.
+5. Rappel : les filtres de Cinécloud (résolutions, langues, taille) **et** ceux d'AIOStreams s'appliquent **tous les deux**.
+
 ### 📱 Configuration Ergonomique & Profils en 1 Clic
 
 - **3 Profils Rapides en 1 clic** :
