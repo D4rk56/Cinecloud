@@ -53,7 +53,7 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
 
 - Format compact style AIOStreams en 2 colonnes :
   - **Gauche :** `[AD ⚡]` ou `[TB ⚡]` + Résolution (`4K ⭐`, `1080p ⭐`, etc.).
-  - **Droite :** Titre propre, détails vidéo/audio, langues audio (`🇫🇷 MULTI / VFF`, `🇬🇧 VO`), provenance de l'indexeur et badge de cache clair (`⚡ Cache Global`, `⚡ Pré-cache RSS`, `⚡ Instantané Lumio` ou `⏳ Téléchargement`).
+  - **Droite (4 lignes) :** statut (`⚡ IMMÉDIAT`, `⏳ TÉLÉCHARGEMENT`, `🔍 À VÉRIFIER`), titre propre, détails vidéo/audio fusionnés, langues (`🇫🇷` `🌐` `VOSTFR`) + source (`| YGG • FW`).
 
 ### 📱 Configuration Ergonomique & Profils en 1 Clic
 

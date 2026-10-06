@@ -6,9 +6,7 @@ const assert = require("node:assert/strict");
 const {
     parseSeasonEpisode,
     parseSizeFromString,
-    extractCleanTitle,
-    extractTechBadge,
-    generateFallbackPoster
+    extractCleanTitle
 } = require("../lib/helpers");
 
 const { hashPassword, verifyPassword, encryptConfig, decryptConfig } = require("../lib/crypto");
@@ -435,7 +433,7 @@ test("Resolver - handleResolve redirects 302 directly to downloadUrl without dro
     // Mock Express req & res
     let redirectCode = null;
     let redirectUrl = null;
-    let statusCode = null;
+    let _statusCode = null;
 
     const req = {
         params: {
@@ -465,7 +463,7 @@ test("Resolver - handleResolve redirects 302 directly to downloadUrl without dro
             redirectUrl = url;
         },
         status: code => {
-            statusCode = code;
+            _statusCode = code;
             return {
                 json: () => {},
                 send: () => {}
@@ -780,12 +778,14 @@ test("Helpers - formatAioStream removes FR SUB badge and displays filename in ri
     // Vérification que (FR SUB) ou (FR Dub) n'apparaît plus dans la ligne de badge
     assert.ok(!formatted.name.includes("(FR SUB)"), "Ne doit pas contenir (FR SUB)");
     assert.ok(!formatted.name.includes("(FR Dub)"), "Ne doit pas contenir (FR Dub)");
-    // Vérification que le nom de fichier est présent dans la colonne de droite au lieu de 'Mon cloud'
+    // Format 4 lignes : statut / titre épuré / technique / langues+source (plus de 📄 raw)
+    const lines = formatted.title.split("\n");
+    assert.equal(lines.length, 4, "Le titre doit comporter exactement 4 lignes");
+    assert.ok(lines[1].includes("Gladiator"), "La ligne titre doit contenir le nom épuré");
     assert.ok(
-        formatted.title.includes("📄 Gladiator.II.2024.FRENCH.1080p.WEB.H264.mkv"),
-        "Doit afficher le nom du fichier"
+        formatted.title.includes("☁️ Cloud personnel"),
+        "La source Cloud doit rester visible"
     );
-    assert.ok(!formatted.title.includes("Mon Cloud"), "Ne doit plus afficher 'Mon Cloud'");
 });
 
 test("Helpers - filterAndSortStreams filters by resolution, language and limits", () => {
@@ -907,7 +907,7 @@ test("Admin & DB - System settings and stats functions", () => {
 
 test("Server - Public status and Admin API endpoints", async () => {
     const app = require("../index");
-    const request = require("node:http");
+    const _request = require("node:http");
 
     // Démarrage d'un serveur de test éphémère
     const server = app.listen(0);
@@ -1155,7 +1155,10 @@ test("Helpers - formatAioStream handles isInstant with ⚡, 🔍 and ⏳ badges"
     });
     assert.ok(instantStream.name.includes("[AD ⚡]"), "Doit inclure le badge [AD ⚡]");
     assert.ok(!instantStream.name.includes("[AD ⏳]"), "Ne doit pas inclure [AD ⏳]");
-    assert.ok(instantStream.title.includes("⚡ Instantané AllDebrid"), "Doit inclure le statut instantané");
+    assert.ok(
+        instantStream.title.includes("⚡ IMMÉDIAT"),
+        "Doit inclure le statut normalisé ⚡ IMMÉDIAT"
+    );
 
     // Flux Prowlarr non confirmé en cache (isInstant: false, indexer: Prowlarr) -> Badge [AD 🔍]
     const prowlarrStream = formatAioStream({
@@ -1171,7 +1174,7 @@ test("Helpers - formatAioStream handles isInstant with ⚡, 🔍 and ⏳ badges"
     assert.ok(!prowlarrStream.name.includes("[AD ⏳]"), "Ne doit pas inclure [AD ⏳]");
     assert.ok(!prowlarrStream.name.includes("[AD ⚡]"), "Ne doit pas inclure [AD ⚡]");
     assert.ok(prowlarrStream.title.includes("42 seeders"), "Doit afficher le nombre de seeders");
-    assert.ok(prowlarrStream.title.includes("Vérif. cache au clic"), "Doit indiquer la vérification au clic");
+    assert.ok(prowlarrStream.title.includes("🔍 À VÉRIFIER"), "Doit indiquer le statut normalisé");
 
     // Flux en cours de téléchargement standard sans Prowlarr -> Badge [AD ⏳]
     const downloadStream = formatAioStream({
@@ -1184,7 +1187,7 @@ test("Helpers - formatAioStream handles isInstant with ⚡, 🔍 and ⏳ badges"
     });
     assert.ok(downloadStream.name.includes("[AD ⏳]"), "Doit inclure le badge [AD ⏳]");
     assert.ok(!downloadStream.name.includes("[AD ⚡]"), "Ne doit pas inclure [AD ⚡]");
-    assert.ok(downloadStream.title.includes("⏳ Téléchargement (42 seeders)"), "Doit préfixer avec ⏳");
+    assert.ok(downloadStream.title.includes("⏳ TÉLÉCHARGEMENT (42 seeders)"), "Doit préfixer avec ⏳");
 });
 
 test("Prowlarr - checkProwlarrConnectivity URL normalization, fallback and diagnosis", async () => {
@@ -1376,40 +1379,21 @@ test("Database - getAllUsersAdmin sorting works across newest, oldest, alpha and
     }
 });
 
-test("Helpers - formatAioStream supports precache, global and lumio badges", () => {
+test("Helpers - formatAioStream unifie les statuts instantanes en ⚡ IMMÉDIAT", () => {
     const { formatAioStream } = require("../lib/helpers");
 
-    const precache = formatAioStream({
-        filename: "Dune.Part.Two.2024.1080p.mkv",
-        cacheType: "precache",
-        isInstant: true
-    });
-    assert.ok(precache.name.includes("[AD ⚡ Pré-cache]"), "Badge pré-cache");
-    assert.ok(precache.title.includes("⚡ Pré-cache RSS • AllDebrid"));
-
-    const globalCache = formatAioStream({
-        filename: "Breaking.Bad.S01E01.1080p.mkv",
-        cacheType: "global",
-        isInstant: true
-    });
-    assert.ok(globalCache.name.includes("[AD ⚡ Cache Global]"), "Badge cache global");
-    assert.ok(globalCache.title.includes("⚡ Cache Global (Mutualisé)"));
-
-    const direct = formatAioStream({
-        filename: "Solo.Leveling.S01E01.1080p.mkv",
-        cacheType: "direct",
-        isInstant: true
-    });
-    assert.ok(direct.name.includes("[AD ⚡ Direct]"), "Badge direct");
-    assert.ok(direct.title.includes("⚡ Recherche Prowlarr Directe"));
-
-    const lumio = formatAioStream({
-        filename: "Inception.2010.1080p.mkv",
-        cacheType: "lumio",
-        isInstant: true
-    });
-    assert.ok(lumio.name.includes("[AD ⚡ Lumio]"), "Badge Lumio");
-    assert.ok(lumio.title.includes("⚡ Instantané Lumio • AllDebrid"));
+    for (const cacheType of ["precache", "global", "direct", "lumio"]) {
+        const s = formatAioStream({
+            filename: "Dune.Part.Two.2024.1080p.mkv",
+            cacheType,
+            isInstant: true
+        });
+        assert.ok(s.name.includes("[AD ⚡]"), `Badge unifié [AD ⚡] pour ${cacheType}`);
+        assert.ok(
+            s.title.split("\n")[0] === "⚡ IMMÉDIAT",
+            `Ligne statut normalisée pour ${cacheType}`
+        );
+    }
 });
 
 test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async () => {
@@ -1449,25 +1433,19 @@ test("Torbox - checkTorboxKey, checkInstantTorbox and stream permalinks", async 
     }
 });
 
-test("Torbox - Helpers formatAioStream formats streams with [TB] badges and Torbox labels", () => {
+test("Torbox - Helpers formatAioStream formats streams with [TB] badges and unified labels", () => {
     const { formatAioStream } = require("../lib/helpers");
 
-    const precache = formatAioStream({
-        filename: "Dune.Part.Two.2024.1080p.mkv",
-        cacheType: "precache",
-        isInstant: true,
-        debridProvider: "torbox"
-    });
-    assert.ok(precache.name.includes("[TB ⚡ Pré-cache]"), "Badge Torbox pré-cache");
-    assert.ok(precache.title.includes("⚡ Pré-cache RSS • Torbox"));
-
-    const globalCache = formatAioStream({
-        filename: "Breaking.Bad.S01E01.1080p.mkv",
-        cacheType: "global",
-        isInstant: true,
-        debridProvider: "torbox"
-    });
-    assert.ok(globalCache.name.includes("[TB ⚡ Cache Global]"), "Badge Torbox cache global");
+    for (const cacheType of ["precache", "global", "lumio"]) {
+        const s = formatAioStream({
+            filename: "Dune.Part.Two.2024.1080p.mkv",
+            cacheType,
+            isInstant: true,
+            debridProvider: "torbox"
+        });
+        assert.ok(s.name.includes("[TB ⚡]"), `Badge Torbox unifié pour ${cacheType}`);
+        assert.ok(s.title.split("\n")[0] === "⚡ IMMÉDIAT", `Statut normalisé pour ${cacheType}`);
+    }
 
     const downloading = formatAioStream({
         filename: "Gladiator.II.2024.1080p.mkv",
@@ -1475,16 +1453,7 @@ test("Torbox - Helpers formatAioStream formats streams with [TB] badges and Torb
         debridProvider: "torbox"
     });
     assert.ok(downloading.name.includes("[TB ⏳]"), "Badge Torbox téléchargement");
-    assert.ok(downloading.title.includes("⏳ En téléchargement Torbox"));
-
-    const lumio = formatAioStream({
-        filename: "Inception.2010.1080p.mkv",
-        cacheType: "lumio",
-        isInstant: true,
-        debridProvider: "torbox"
-    });
-    assert.ok(lumio.name.includes("[TB ⚡ Lumio]"), "Badge Torbox Lumio");
-    assert.ok(lumio.title.includes("⚡ Instantané Lumio • Torbox"));
+    assert.ok(downloading.title.split("\n")[0] === "⏳ TÉLÉCHARGEMENT");
 });
 
 test("Torbox - checkInstantTorbox parses object and list mock responses", async () => {
@@ -1496,7 +1465,7 @@ test("Torbox - checkInstantTorbox parses object and list mock responses", async 
         const hash2 = "2222222222222222222222222222222222222222";
 
         // Mock format object
-        torboxApi.get = async function (url, config) {
+        torboxApi.get = async function (url, _config) {
             if (url && url.includes("/torrents/checkcached")) {
                 return {
                     status: 200,
@@ -1517,7 +1486,7 @@ test("Torbox - checkInstantTorbox parses object and list mock responses", async 
         assert.equal(resultObj[hash2], undefined);
 
         // Mock format list
-        torboxApi.get = async function (url, config) {
+        torboxApi.get = async function (url, _config) {
             if (url && url.includes("/torrents/checkcached")) {
                 return {
                     status: 200,
@@ -1572,7 +1541,7 @@ test("Lumio - handleStream queries Lumio on-demand and filters out error cards",
 
     try {
         let interceptedEndpoint = null;
-        axios.get = async function (url, config) {
+        axios.get = async function (url, _config) {
             if (url && url.includes("/stream/movie/tt1234567.json")) {
                 interceptedEndpoint = url;
                 return {
@@ -1643,13 +1612,13 @@ test("Lumio - handleStream queries Lumio on-demand and filters out error cards",
         // Vérifier les badges des flux retournés
         const adStream = result.streams.find(s => s.url === "https://mylumio.tv/play/valid123");
         assert.ok(adStream, "Le flux AllDebrid doit être présent");
-        assert.ok(adStream.name.includes("[AD ⚡ Lumio]"), "Badge [AD ⚡ Lumio]");
-        assert.ok(adStream.title.includes("⚡ Instantané Lumio • AllDebrid"));
+        assert.ok(adStream.name.includes("[AD ⚡ Lumio]"), "Badge Lumio conservé (statusTag explicite)");
+        assert.ok(adStream.title.split("\n")[0] === "⚡ IMMÉDIAT");
 
         const tbStream = result.streams.find(s => s.url === "https://mylumio.tv/play/valid456");
         assert.ok(tbStream, "Le flux Torbox doit être présent");
-        assert.ok(tbStream.name.includes("[TB ⚡ Lumio]"), "Badge [TB ⚡ Lumio]");
-        assert.ok(tbStream.title.includes("⚡ Instantané Lumio • Torbox"));
+        assert.ok(tbStream.name.includes("[TB ⚡ Lumio]"), "Badge Lumio conservé (statusTag explicite)");
+        assert.ok(tbStream.title.split("\n")[0] === "⚡ IMMÉDIAT");
     } finally {
         axios.get = originalGet;
     }
@@ -1669,7 +1638,7 @@ test("Helpers - formatAioStream source and status lines structure", () => {
     assert.ok(prowlarrStream.name.includes("1080p"), "Colonne de gauche inclut la résolution");
     assert.ok(!prowlarrStream.name.includes("Cinécloud"), "Ne doit plus inclure de nom de provider superflu à gauche");
     assert.ok(prowlarrStream.title.includes("🔍 Prowlarr (YggTorrent)"), "Ligne de source Prowlarr");
-    assert.ok(prowlarrStream.title.includes("⚡ Instantané AllDebrid"), "Ligne de statut instantané AD");
+    assert.ok(prowlarrStream.title.split("\n")[0] === "⚡ IMMÉDIAT", "Ligne de statut normalisée");
 
     // 2. Source Lumio avec sous-source
     const lumioStream = formatAioStream({
@@ -1679,9 +1648,9 @@ test("Helpers - formatAioStream source and status lines structure", () => {
         isInstant: true,
         debridProvider: "torbox"
     });
-    assert.ok(lumioStream.name.startsWith("[TB ⚡ Lumio]"), "Badge Torbox Lumio");
+    assert.ok(lumioStream.name.startsWith("[TB ⚡]"), "Badge Torbox unifié");
     assert.ok(lumioStream.title.includes("🌐 Lumio (Sharewood)"), "Ligne de source Lumio détaillée");
-    assert.ok(lumioStream.title.includes("⚡ Instantané Lumio • Torbox"), "Ligne de statut Lumio Torbox");
+    assert.ok(lumioStream.title.split("\n")[0] === "⚡ IMMÉDIAT", "Ligne de statut normalisée");
 
     // 3. Source Mon Cloud personnel
     const cloudStream = formatAioStream({
@@ -1690,9 +1659,9 @@ test("Helpers - formatAioStream source and status lines structure", () => {
         isInstant: true,
         debridProvider: "alldebrid"
     });
-    assert.ok(cloudStream.name.startsWith("[AD ⚡ Cloud]"), "Badge gauche Cloud");
+    assert.ok(cloudStream.name.startsWith("[AD ☁️]"), "Badge gauche Cloud");
     assert.ok(cloudStream.title.includes("☁️ Cloud personnel"), "Ligne de source Cloud personnel");
-    assert.ok(cloudStream.title.includes("⚡ Lecture immédiate"), "Ligne de statut Lecture immédiate");
+    assert.ok(cloudStream.title.split("\n")[0] === "☁️ CLOUD • ⚡ IMMÉDIAT", "Ligne de statut Cloud");
     assert.ok(
         !cloudStream.title.includes("Cloud personnel\n⚡ Cloud personnel"),
         "Ne doit pas doubler Cloud personnel"
@@ -1705,7 +1674,7 @@ test("Helpers - formatAioStream source and status lines structure", () => {
         debridProvider: "alldebrid"
     });
     assert.ok(dlAdStream.name.includes("[AD ⏳]"));
-    assert.ok(dlAdStream.title.includes("⏳ En téléchargement AllDebrid"));
+    assert.ok(dlAdStream.title.split("\n")[0] === "⏳ TÉLÉCHARGEMENT");
 
     const dlTbStream = formatAioStream({
         filename: "Gladiator.2000.1080p.mkv",
@@ -1713,7 +1682,7 @@ test("Helpers - formatAioStream source and status lines structure", () => {
         debridProvider: "torbox"
     });
     assert.ok(dlTbStream.name.includes("[TB ⏳]"));
-    assert.ok(dlTbStream.title.includes("⏳ En téléchargement Torbox"));
+    assert.ok(dlTbStream.title.split("\n")[0] === "⏳ TÉLÉCHARGEMENT");
 });
 
 test("UI - Stepper naming, hidden login error, TMDB guidance, and Lumio links", () => {
@@ -1969,8 +1938,7 @@ const {
     getAnimeMappingByTmdb,
     sanitizeImdbId,
     sanitizeKitsuId,
-    LruCache,
-    fetchKitsuDetails
+    LruCache
 } = require("../lib/animeMapping");
 
 const { resolveKitsuMeta } = require("../lib/helpers");
@@ -2468,23 +2436,23 @@ test("Helpers & Cloud - formatAioStream handles Exit 8 WEB release with proper q
         debridProvider: "alldebrid"
     });
 
-    // 1. Badge gauche
-    assert.ok(formatted.name.includes("[AD ⚡ Cloud]"), "Badge [AD ⚡ Cloud] attendu");
+    // 1. Badge gauche (format unifié)
+    assert.ok(formatted.name.includes("[AD ☁️]"), "Badge [AD ☁️] attendu");
     assert.ok(formatted.name.includes("1080p ⭐"), "Résolution 1080p ⭐ attendue");
 
-    // 2. Qualité WEB-DL et Codec AVC
-    assert.ok(formatted.title.includes("🎬 WEB-DL • AVC"), "Doit détecter WEB-DL et AVC");
+    // 2. Ligne technique fusionnée (résolution + source + codec + taille)
+    assert.ok(formatted.title.includes("🎬 1080p • WEB-DL • AVC • 2.3 GB"), "Ligne technique fusionnée");
 
-    // 3. Taille et Audio
-    assert.ok(formatted.title.includes("📦 2.3 GB"), "Doit afficher la taille du fichier");
+    // 3. Langues et Release Group (option B : groupe conservé `| ... • SORTIEHUIT`)
+    assert.ok(formatted.title.includes("🇫🇷"), "Doit afficher 🇫🇷 pour MULTi");
+    assert.ok(formatted.title.includes("SORTIEHUIT"), "Doit détecter le groupe SORTIEHUIT");
 
-    // 4. Langues et Release Group
-    assert.ok(formatted.title.includes("🇫🇷 / 🌐"), "Doit afficher 🇫🇷 / 🌐 pour MULTi");
-    assert.ok(formatted.title.includes("🏷️ SORTIEHUIT"), "Doit détecter le groupe SORTIEHUIT");
-
-    // 5. Source et Statut sans doublon
+    // 4. Source et Statut sans doublon
     assert.ok(formatted.title.includes("☁️ Cloud personnel"), "Ligne de provenance Cloud personnel");
-    assert.ok(formatted.title.includes("⚡ Lecture immédiate"), "Ligne de statut Lecture immédiate");
+    assert.ok(
+        formatted.title.split("\n")[0] === "☁️ CLOUD • ⚡ IMMÉDIAT",
+        "Ligne de statut Cloud normalisée"
+    );
     assert.equal(
         formatted.title.includes("Cloud personnel\n⚡ Cloud personnel"),
         false,
@@ -2499,9 +2467,12 @@ test("Helpers & Cloud - formatAioStream handles Exit 8 WEB release with proper q
         isInstant: true,
         debridProvider: "torbox"
     });
-    assert.ok(formattedTb.name.includes("[TB ⚡ Cloud]"), "Badge [TB ⚡ Cloud] attendu pour Torbox");
+    assert.ok(formattedTb.name.includes("[TB ☁️]"), "Badge [TB ☁️] attendu pour Torbox");
     assert.ok(formattedTb.title.includes("☁️ Cloud personnel"), "Source Cloud personnel");
-    assert.ok(formattedTb.title.includes("⚡ Lecture immédiate"), "Statut Torbox");
+    assert.ok(
+        formattedTb.title.split("\n")[0] === "☁️ CLOUD • ⚡ IMMÉDIAT",
+        "Statut Cloud normalisé"
+    );
 });
 
 test("Helpers & Catalogs - extractCleanTitle and parseSeasonEpisode handle parentheses, technical tags, and animes", () => {
@@ -2780,14 +2751,14 @@ test("AllDebrid - checkInstantMagnets is read-only and never uploads magnets to 
     const originalPost = alldebrid.adPost;
     const originalGet = alldebrid.adGet;
 
-    alldebrid.adPost = async (endpoint, apiKey, data) => {
+    alldebrid.adPost = async (endpoint, _apiKey, _data) => {
         if (endpoint.includes("upload")) {
             uploadCalled = true;
         }
         return { data: { status: "error" } };
     };
 
-    alldebrid.adGet = async (endpoint, apiKey, params) => {
+    alldebrid.adGet = async (endpoint, _apiKey, _params) => {
         if (endpoint === "/v4/magnet/instant") {
             instantCalled = true;
             return {
@@ -2856,7 +2827,7 @@ test("Catalogs - my_ad_history_series with real SQLite loadCache never throws un
         return { data: { status: "error" } };
     };
 
-    axios.get = async (url, opts) => {
+    axios.get = async (url, _opts) => {
         const u = typeof url === "string" ? url : "";
         if (u.includes("cinemeta.strem.io/catalog/series")) {
             // Comparaison insensible à la casse (le titre nettoyé peut varier)
@@ -2983,7 +2954,7 @@ test("Catalogs - my_ad_history_series supports official data.history structure a
         return { data: { status: "error" } };
     };
 
-    axios.get = async (url, opts) => {
+    axios.get = async (url, _opts) => {
         if (url && typeof url === "string" && url.includes("cinemeta.strem.io/catalog/series")) {
             return {
                 data: {
@@ -3224,7 +3195,7 @@ test("Catalogs & AllDebrid - Season pack expands internal video files individual
         return { data: { status: "success", data: {} } };
     };
 
-    alldebrid.getMagnetFiles = async ids => {
+    alldebrid.getMagnetFiles = async _ids => {
         return {
             555: [
                 { n: "Jujutsu.Kaisen.S01E01.1080p.mkv", s: 1000000000, l: "https://ad.com/dl/e01" },
@@ -3683,22 +3654,15 @@ test("Stream Prioritization - Instant streams are placed at top, and Prowlarr st
         debridProvider: "alldebrid"
     });
 
-    // Vérification des badges
-    assert.ok(
-        instantStream.name.includes("[AD ⚡ Cache Global]"),
-        "Le flux instantané doit porter le badge [AD ⚡ Cache Global]"
-    );
+    // Vérification des badges (format unifié)
+    assert.ok(instantStream.name.includes("[AD ⚡]"), "Le flux instantané doit porter le badge [AD ⚡]");
     assert.ok(
         unconfirmedHighSeeders.name.includes("[AD 🔍]"),
         "Le flux Prowlarr non confirmé doit porter le badge [AD 🔍]"
     );
     assert.ok(
-        unconfirmedHighSeeders.title.includes("55 seeders"),
-        "Le sous-titre doit mentionner le nombre de seeders"
-    );
-    assert.ok(
-        unconfirmedHighSeeders.title.includes("Vérif. cache au clic"),
-        "Le sous-titre doit indiquer la vérification au clic"
+        unconfirmedHighSeeders.title.includes("🔍 À VÉRIFIER (55 seeders)"),
+        "Le sous-titre doit porter le statut normalisé avec seeders"
     );
 
     // Tri des flux : flux instantané en premier, puis tri par seeders pour les flux Prowlarr directs
@@ -3753,7 +3717,7 @@ test("AllDebrid - preValidateMagnets uploads batch, marks ready in cache, and im
         return { data: { status: "error" } };
     };
 
-    alldebrid.deleteMagnet = async (id, apiKey) => {
+    alldebrid.deleteMagnet = async (id, _apiKey) => {
         deletedIds.push(id);
         return true;
     };
@@ -3811,7 +3775,7 @@ test("Stremio Streams - handleStream with active AllDebrid pre-validation displa
     // Reset LRU
     if (alldebrid.instantCacheLRU && alldebrid.instantCacheLRU.clear) alldebrid.instantCacheLRU.clear();
 
-    alldebrid.adPost = async (endpoint, apiKey, data) => {
+    alldebrid.adPost = async (endpoint, _apiKey, _data) => {
         if (endpoint === "/v4/magnet/upload") {
             return {
                 data: {
@@ -3896,15 +3860,15 @@ test("Stremio Streams - handleStream with active AllDebrid pre-validation displa
         assert.ok(readyStream, "Le flux ready doit être présent");
         assert.ok(readyStream.name.includes("⚡"), "Le flux ready doit porter l'éclair ⚡");
         assert.ok(
-            readyStream.title.includes("Instantané") || readyStream.title.includes("Pré-cache"),
-            "Le statut ready doit être instantané"
+            readyStream.title.includes("⚡ IMMÉDIAT"),
+            "Le statut ready doit être normalisé ⚡ IMMÉDIAT"
         );
 
         assert.ok(unreadyStream, "Le flux unready doit être présent");
         assert.ok(unreadyStream.name.includes("⏳"), "Le flux unready doit porter le sablier ⏳");
         assert.ok(
-            unreadyStream.title.includes("Téléchargement (12 seeders)"),
-            "Le statut unready doit indiquer Téléchargement avec seeders"
+            unreadyStream.title.includes("⏳ TÉLÉCHARGEMENT (12 seeders)"),
+            "Le statut unready doit être normalisé avec seeders"
         );
     } finally {
         deleteCachedTorrent("cccc111122223333444455556666777788889999");
@@ -4597,9 +4561,12 @@ test("Helpers - formatAioStream badges et provenance Torrentio", () => {
         debridProvider: "alldebrid",
         url: "http://localhost:3000/resolve/test-user/tt1/hash_x"
     });
-    assert.ok(instant.name.includes("[AD ⚡ Torrentio]"), "Badge instantané Torrentio");
+    assert.ok(instant.name.includes("[AD ⚡ Torrentio]"), "Badge instantané Torrentio (statusTag conservé)");
     assert.ok(instant.title.includes("🚀 Torrentio (1337x)"), "Ligne de provenance Torrentio (indexer)");
-    assert.ok(instant.title.includes("⚡ Instantané Torrentio • AllDebrid"), "Statut instantané Torrentio");
+    assert.ok(
+        instant.title.split("\n")[0] === "⚡ IMMÉDIAT",
+        "Statut normalisé ⚡ IMMÉDIAT"
+    );
 
     const notInstant = formatAioStream({
         filename: "Film.2024.1080p.WEB-DL.mkv",
@@ -4611,8 +4578,8 @@ test("Helpers - formatAioStream badges et provenance Torrentio", () => {
         isInstant: false,
         debridProvider: "alldebrid"
     });
-    assert.ok(notInstant.name.includes("[AD 🔍 Torrentio]"), "Badge recherche Torrentio");
-    assert.ok(notInstant.title.includes("🔍 Torrentio (12 seeders)"), "Statut de vérification au clic");
+    assert.ok(notInstant.name.includes("[AD 🔍 Torrentio]"), "Badge recherche Torrentio (statusTag conservé)");
+    assert.ok(notInstant.title.includes("🔍 À VÉRIFIER (12 seeders)"), "Statut normalisé avec seeders");
 });
 
 test("Torbox - 422 requestdl : le détail est remonté et la cible mise en quarantaine", async () => {
@@ -5192,7 +5159,7 @@ test("Stremio Streams - read-only instant check eclaire un torrent au-dela du to
         const targetStream = res.streams.find(s => (s.url || "").includes(TARGET));
         assert.ok(targetStream, "Le flux TARGET (15e, hors top 12) doit etre present");
         assert.ok(targetStream.name.includes("⚡"), "Le flux TARGET doit porter l'eclair via le check read-only");
-        assert.ok(targetStream.title.includes("Instantané"), "Le statut TARGET doit etre instantane");
+        assert.ok(targetStream.title.includes("⚡ IMMÉDIAT"), "Le statut TARGET doit etre normalisé");
     } finally {
         axios.get = originalGet;
         alldebrid.adGet = originalAdGet;
