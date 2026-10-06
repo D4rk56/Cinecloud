@@ -5367,3 +5367,84 @@ test("Prowlarr On-Demand - stremio.js n'emprunte plus la configuration Prowlarr 
         "La recherche à la demande doit dépendre de la clé propre à l'utilisateur"
     );
 });
+
+test("AllDebrid - quarantaine des cibles mortes : plus aucun appel API répété", async () => {
+    const alldebrid = require("../lib/alldebrid");
+    const { unlockFileTarget } = require("../lib/resolver");
+    const originalGet = alldebrid.alldebridApi.get;
+    const originalPost = alldebrid.alldebridApi.post;
+    const originalWarn = console.warn;
+    const warnings = [];
+    console.warn = (...args) => warnings.push(args.join(" "));
+
+    let calls = 0;
+    const emptyResponse = { status: 200, data: { status: "success", data: {} } };
+    alldebrid.alldebridApi.get = async () => {
+        calls++;
+        return emptyResponse;
+    };
+    alldebrid.alldebridApi.post = async () => {
+        calls++;
+        return emptyResponse;
+    };
+
+    try {
+        // 1. Disponibilité : seuls les magnets prêts sont lisibles
+        assert.equal(alldebrid.isAllDebridMagnetReady({ statusCode: 4 }), true);
+        assert.equal(alldebrid.isAllDebridMagnetReady({ ready: true }), true);
+        for (const code of [0, 1, 2, 3, 5, 9]) {
+            assert.equal(alldebrid.isAllDebridMagnetReady({ statusCode: code }), false, `statusCode ${code} non prêt`);
+        }
+        assert.equal(alldebrid.isAllDebridMagnetReady({}), true, "État non rapporté : on ne masque rien");
+        assert.equal(alldebrid.isAllDebridMagnetReady(null), false);
+
+        // 2. Échec → diagnostic explicite + quarantaine
+        alldebrid.resetAllDebridDeadTargets();
+        const first = await unlockFileTarget("key", "786515879");
+        assert.equal(first, null, "Un magnet sans fichier exploitable ne résout rien");
+        assert.ok(calls > 0, "Le premier essai interroge bien AllDebrid");
+        assert.ok(
+            warnings.some(w => w.includes("786515879") && w.includes("0 fichier")),
+            "La raison de l'échec doit être journalisée (plus d'échec silencieux)"
+        );
+        assert.equal(alldebrid.isAllDebridTargetDead("786515879"), true, "La cible doit être mise en quarantaine");
+
+        // 3. Cible en quarantaine → aucun appel API supplémentaire
+        const callsAfterFirst = calls;
+        const second = await unlockFileTarget("key", "786515879");
+        assert.equal(second, null);
+        assert.equal(calls, callsAfterFirst, "Une cible en quarantaine ne doit plus interroger l'API");
+
+        // 4. Une cible différente reste tentée
+        await unlockFileTarget("key", "786515999");
+        assert.ok(calls > callsAfterFirst, "Une autre cible doit être retentée");
+
+        // 5. Réinitialisation
+        alldebrid.resetAllDebridDeadTargets();
+        assert.equal(alldebrid.isAllDebridTargetDead("786515879"), false, "reset() lève la quarantaine");
+    } finally {
+        alldebrid.alldebridApi.get = originalGet;
+        alldebrid.alldebridApi.post = originalPost;
+        console.warn = originalWarn;
+        alldebrid.resetAllDebridDeadTargets();
+    }
+});
+
+test("AllDebrid - l'émission des flux cloud applique disponibilité et quarantaine", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const source = fs.readFileSync(path.join(__dirname, "..", "lib", "stremio.js"), "utf8");
+
+    assert.ok(
+        !/m\.statusCode && m\.statusCode > 4/.test(source),
+        "Le filtre approximatif « statusCode > 4 » doit être remplacé par le prédicat de disponibilité"
+    );
+    assert.ok(
+        source.includes("isAllDebridMagnetReady"),
+        "Un magnet non prêt ne doit plus être annoncé comme instantané"
+    );
+    assert.ok(
+        source.includes("isAllDebridTargetDead"),
+        "Une cible en quarantaine ne doit plus être proposée dans les flux"
+    );
+});

@@ -18,6 +18,8 @@ Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise 
 - **AllDebrid** : Intégration complète avec débridage instantané, flux Cloud personnels (_Mes Magnets_, _Liens Débridés_, _Historique_) et gestion du pré-cache.
 - **Torbox** : Support complet avec vérification instantanée de disponibilité et lecture directe haute performance.
 - **Résolveur Lazy intelligent** : Redirection 302 instantanée vers les flux CDN avec bascule automatique (failover) sur les miroirs disponibles.
+  - **Seuls les magnets réellement prêts sont proposés** : un téléchargement en cours (`statusCode` 0-3) n'est plus annoncé comme « ⚡ Instantané / Cloud », ce qui évitait de cliquer un flux illisible.
+  - **Quarantaine automatique (10 min)** : une cible qui échoue (magnet supprimé, aucun fichier vidéo exploitable) n'est plus réinterrogée — elle disparaît de la liste des flux et les tentatives suivantes répondent instantanément. Le journal indique désormais **la raison exacte** de l'échec.
 
 ### 🛡️ Contournement des Blocages IP VPS (Cloudflare WARP)
 
