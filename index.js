@@ -72,6 +72,7 @@ const {
     deleteUser,
     getUserStats,
     getAllUsersAdmin,
+    getUsersProwlarrStatus,
     adminDeleteUser,
     getSystemSettings,
     updateSystemSettings,
@@ -339,6 +340,61 @@ function requireAdmin(req, res, next) {
     next();
 }
 
+// Jeton de session UTILISATEUR : délivré après un login réussi (UUID + mot de passe) afin de
+// ne plus ressaisir le mot de passe à chaque enregistrement depuis /configure.
+// Portée volontairement limitée : un jeton n'autorise JAMAIS la modification des clés API ni
+// du mot de passe (voir /api/user/update), il est lié à un UUID et expire en 1 heure.
+const USER_SESSION_TTL_MS = 60 * 60 * 1000;
+const activeUserSessions = new Map(); // token -> { uuid, expiresAt }
+
+function issueUserSession(uuid) {
+    const token = crypto.randomBytes(32).toString("hex");
+    activeUserSessions.set(token, { uuid: String(uuid), expiresAt: Date.now() + USER_SESSION_TTL_MS });
+    return token;
+}
+
+/** Renvoie la session si le jeton est valide ET lié à cet UUID (expiration glissante). */
+function resolveUserSession(req, uuid) {
+    const token = req.headers["x-user-token"];
+    if (!token || !uuid) return null;
+    const session = activeUserSessions.get(token);
+    if (!session) return null;
+    if (Date.now() > session.expiresAt) {
+        activeUserSessions.delete(token);
+        return null;
+    }
+    if (session.uuid !== String(uuid).trim()) return null;
+    session.expiresAt = Date.now() + USER_SESSION_TTL_MS;
+    return session;
+}
+
+/** Révoque toutes les sessions d'un utilisateur (changement de mot de passe). */
+function revokeUserSessions(uuid) {
+    const target = String(uuid).trim();
+    let removed = 0;
+    for (const [token, session] of activeUserSessions) {
+        if (session.uuid === target) {
+            activeUserSessions.delete(token);
+            removed++;
+        }
+    }
+    return removed;
+}
+
+function purgeExpiredUserSessions() {
+    const now = Date.now();
+    let removed = 0;
+    for (const [token, session] of activeUserSessions) {
+        if (now > session.expiresAt) {
+            activeUserSessions.delete(token);
+            removed++;
+        }
+    }
+    if (removed > 0) {
+        console.log(`[User] ${removed} session(s) utilisateur expirée(s) purgée(s) du cache mémoire.`);
+    }
+}
+
 // Purge les sessions administrateur expirées et non réutilisées.
 // Sans appel périodique, chaque login admin empile une entrée jusqu'à 8 h de TTL :
 // la Map grossit alors que les tokens ne sont cleans qu'au moment de leur ré-utilisation
@@ -529,6 +585,9 @@ app.post("/api/user/login", authLimiter, validateAdmin({ body: userLoginSchema }
             uuid: user.uuid,
             manifestUrl,
             stremioUrl,
+            // Jeton de session : permet d'enregistrer les réglages non sensibles sans
+            // ressaisir le mot de passe (1 h, lié à cet UUID).
+            sessionToken: issueUserSession(user.uuid),
             config: {
                 debridProvider: config.debridProvider || "alldebrid",
                 apiKeyPreview: config.apiKey ? `${config.apiKey.slice(0, 4)}...${config.apiKey.slice(-4)}` : "",
@@ -588,16 +647,49 @@ app.post("/api/user/update", authLimiter, validateAdmin({ body: userUpdateSchema
             enabledCatalogs
         } = req.body;
 
-        if (!uuid || !password) {
-            return res.status(400).json({ error: "UUID et mot de passe requis." });
+        if (!uuid) {
+            return res.status(400).json({ error: "UUID et mot de passe (ou jeton de session) requis." });
         }
 
         const user = getUserByUuid(uuid.trim());
-        if (!user || !verifyPassword(password, user.passwordHash)) {
+        if (!user) {
+            return res.status(401).json({ error: "UUID ou mot de passe incorrect." });
+        }
+
+        // Deux voies d'authentification :
+        //  - le mot de passe (complet) ;
+        //  - un jeton de session délivré par /api/user/login (réglages NON sensibles uniquement).
+        const passwordOk = Boolean(password) && verifyPassword(password, user.passwordHash);
+        const session = passwordOk ? null : resolveUserSession(req, uuid);
+        if (!passwordOk && !session) {
             return res.status(401).json({ error: "UUID ou mot de passe incorrect." });
         }
 
         const currentConfig = decryptConfig(user.configEncrypted);
+
+        // Une session ne peut jamais modifier les clés API ni le mot de passe : le mot de passe
+        // reste exigé dès que ces champs changent.
+        if (session) {
+            // Un champ vide signifie « conserver la valeur enregistrée » (le formulaire affiche
+            // un aperçu masqué) : ce n'est donc pas un changement, et cela ne doit pas exiger
+            // le mot de passe — sinon enregistrer après un rechargement serait impossible.
+            const changed = (submitted, current) => {
+                const value = submitted === undefined ? "" : String(submitted).trim();
+                if (value === "") return false;
+                return value !== String(current || "");
+            };
+            const sensitiveChange =
+                changed(apiKey, currentConfig.apiKey) ||
+                changed(torboxApiKey, currentConfig.torboxApiKey) ||
+                changed(prowlarrKey, currentConfig.prowlarrKey) ||
+                changed(tmdbKey, currentConfig.tmdbKey) ||
+                Boolean(newPassword && String(newPassword).trim());
+            if (sensitiveChange) {
+                return res.status(401).json({
+                    error: "Mot de passe requis pour modifier les clés API ou le mot de passe."
+                });
+            }
+        }
         const resolvedProwlarrMode =
             prowlarrMode === "shared" || prowlarrMode === "private" || prowlarrMode === "local"
                 ? prowlarrMode
@@ -688,6 +780,8 @@ app.post("/api/user/update", authLimiter, validateAdmin({ body: userUpdateSchema
 
         if (newPassword && typeof newPassword === "string" && newPassword.length >= 4) {
             updateUserPassword(uuid.trim(), hashPassword(newPassword));
+            // Un changement de mot de passe invalide toutes les sessions en cours.
+            revokeUserSessions(uuid.trim());
         }
 
         // Réveil / redémarrage du worker Prowlarr avec les paramètres mis à jour
@@ -1016,7 +1110,17 @@ app.get("/api/admin/stats", requireAdmin, (req, res) => {
 
 app.get("/api/admin/users", requireAdmin, validateAdmin({ query: usersQuerySchema }), (req, res) => {
     const sortBy = req.query.sortBy || "newest";
-    res.json(getAllUsersAdmin(sortBy));
+    const allUsers = getAllUsersAdmin(sortBy);
+    const users = Array.isArray(allUsers) ? allUsers : [];
+    // Le Prowlarr du serveur n'étant jamais emprunté, l'admin doit voir qui a réellement
+    // configuré son instance personnelle pour la recherche à la demande.
+    const statuses = getUsersProwlarrStatus();
+    res.json(
+        users.map(u => ({
+            ...u,
+            ...(statuses.get(u.uuid) || { prowlarrConfigured: false, prowlarrHost: "" })
+        }))
+    );
 });
 
 app.delete("/api/admin/users/:uuid", requireAdmin, validateAdmin({ params: userDeleteParamsSchema }), (req, res) => {
@@ -1377,7 +1481,13 @@ if (purgeTimer && purgeTimer.unref) {
 
 // Purge périodique des sessions administrateur expirées (évite la croissance
 // illimitée de activeAdminTokens sur les logins successifs).
-const adminTokenPurgeTimer = setInterval(purgeExpiredAdminTokens, 15 * 60 * 1000);
+const adminTokenPurgeTimer = setInterval(
+    () => {
+        purgeExpiredAdminTokens();
+        purgeExpiredUserSessions();
+    },
+    15 * 60 * 1000
+);
 if (adminTokenPurgeTimer && adminTokenPurgeTimer.unref) {
     adminTokenPurgeTimer.unref();
 }

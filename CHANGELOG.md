@@ -1,0 +1,48 @@
+# 📜 Journal des modifications — Cinécloud
+
+Les changements notables de ce projet. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
+
+## [2.4.1] — 2026-10-06
+
+Dernière passe d'amélioration avant mise en pause du développement : sécurité, fiabilité du résolveur, interopérabilité AIOStreams et documentation.
+
+### Sécurité
+
+- **Assainissement du contenu d'embed administrateur** (`lib/sanitize.js`) : reconstruction par liste blanche close (ni `script`, `iframe`, `style`, `on*`, ni schéma `javascript:`), appliquée **à l'enregistrement et au rendu**. Ajout de la section **I** de `SECURITY.md`.
+- **Jeton de session utilisateur** (`x-user-token`, 1 h, lié à l'UUID) : enregistrement des réglages **sans ressaisir le mot de passe**, tandis que les **clés API et le mot de passe** exigent toujours le mot de passe. Révocation automatique au changement de mot de passe. Ajout de la section **J** de `SECURITY.md`.
+- **Jeton AllDebrid limité à l'en-tête** : suppression des clés API des URLs et durcissement des redirections (garde open-redirect).
+- **Garde SSRF** (`lib/net-guard.js`) : autorise les services auto-hébergés, bloque link-local / métadonnées cloud / multicast, y compris après résolution DNS.
+- `TRUST_PROXY` désactivé par défaut ; rate limiting par IP client restauré derrière un reverse proxy.
+
+### Corrigé
+
+- **Torbox — HTTP 422 sur `requestdl`** : l'API exige le token en **paramètre de requête** (l'en-tête seul est rejeté). Le corps d'erreur FastAPI est désormais extrait et journalisé, et l'URL CDN est refusée si elle contient la clé.
+- **Boucles de résolution** : quarantaine automatique (10 min) des cibles mortes côté **AllDebrid** et **Torbox**, avec suppression de la cible de la liste des flux.
+- **Magnets AllDebrid non prêts** : plus annoncés comme « ⚡ Instantané / Cloud » (`statusCode` 0-3 exclus), ce qui provoquait des échecs au clic.
+- **Prowlarr** : l'instance du serveur n'est **plus empruntée** pour les recherches des utilisateurs (cause des « timeout » universels) ; budget borné et disjoncteur (3 échecs → pause 10 min) sur la recherche à la demande ; le réglage `prowlarrTimeoutMs` est **enfin appliqué**.
+- **Tags Git** : migration des endpoints Torbox et élimination des clés API des URLs.
+
+### Ajouté
+
+- **Intégration Torrentio** : filtres (Taille, Seed, Langue, Résolutions) dans l'URL de manifest, lecture via **votre propre clé** AllDebrid/Torbox, egress WARP avec **diagnostic par tentative** (`proxy:403 • direct:403`) et choix de l'ordre (_Auto_ / _Direct d'abord_).
+- **`behaviorHints` complet** sur chaque flux (`filename`, `videoSize`, `seeders`, `indexer`, `service`, `cached`) — nécessaire pour qu'AIOStreams parse correctement résolution, qualité, langue et statut de cache.
+- **Manifeste** : ressources `meta`/`stream` déclarées en objets avec `idPrefixes` (+ champ global), supprimant l'avertissement AIOStreams « addon provides no idPrefixes ».
+- **Personnalisation de la page publique** (admin) : embed HTML assaini, iframe en bac à sable, bouton Discord.
+- **Exclusions intelligentes** : artefacts (`zip`, `rar`, `srt`, images, `sample`, `bonus`, `trailer`…) retirés de l'historique et du cloud ; détection des packs « COMPLETE / INTEGRALE / COFFRET / BATCH ».
+- **Colonne « Prowlarr On-Demand »** dans **Admin → Utilisateurs** : ✅ configuré / ❌ non configuré, avec l'hôte de l'instance.
+- **Optimisations du résolveur** : cache de résolution (10 min), cache des listes de fichiers par magnet, timeout AllDebrid réellement piloté par le réglage admin (`httpTimeoutMs`).
+- **Documentation** : README restructuré (API, catalogues, dépannage, structure), `CHANGELOG.md`, sections `SECURITY.md`, `CONTRIBUTING.md` aligné sur les gardes CI.
+
+### Infrastructure
+
+- **CI** : actions mises à jour vers leurs versions **Node 24** (fin de l'avertissement « Node.js 20 is deprecated »), ajout des étapes **lint** et **format:check**, sérialisation des exécutions (`concurrency`) et plafonds de durée (`timeout-minutes`).
+
+## [2.4.0] — 2026-09
+
+- Validation stricte des entrées (Zod), CORS strict, en-têtes CSP, limites de taille de corps.
+- Cache Prowlarr mutualisé, revalidation `is_instant`, tri des catalogues historique/cloud.
+- Module animés (Anitomy + mapping Fribb), formateur de flux épuré, profils rapides et QR Code.
+
+## [2.0.0] — 2026-08
+
+- Première version publique : support AllDebrid + Torbox, Prowlarr, panneau d'administration, chiffrement des clés.

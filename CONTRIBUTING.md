@@ -62,13 +62,19 @@ nuvio-alldebrid/
 │   ├── env.js                # Validation au démarrage fail-fast des variables d'environnement (Zod)
 │   ├── helpers.js            # Normalisation des flux, regex titres, détection MULTi et langues
 │   ├── logger.js             # Tampon circulaire mémoire de logs console pour l'admin UI
-│   ├── prowlarr-worker.js    # Tâche d'arrière-plan de synchronisation RSS crowdsourcée
-│   ├── resolver.js           # Résolveur lazy de flux vidéo, failover et sélection de fichier
+│   ├── net-guard.js          # Garde SSRF des requêtes sortantes (privé autorisé, métadonnées bloquées)
+│   ├── prowlarr-worker.js    # RSS crowdsourcé + recherche à la demande (budget et disjoncteur)
+│   ├── resolver.js           # Résolveur lazy, failover, cache de résolution et quarantaine
+│   ├── sanitize.js           # Assainissement par liste blanche du HTML d'embed (anti-XSS)
 │   ├── stremio.js            # Moteur de génération des manifests, catalogues et flux Stremio
 │   ├── torbox.js             # Client Torbox (recherche cache, instantanéité, streaming)
 │   └── ui.js                 # Interface web utilisateur et panneau d'administration HTML/CSS/JS
 ├── test/
-│   └── addon.test.js         # Suite complète de tests unitaires et d'intégration (node:test)
+│   ├── addon.test.js         # Tests unitaires et d'intégration (node:test)
+│   ├── stream-format.test.js # Format des flux (libellés normalisés, behaviorHints)
+│   └── security-governance.test.js # Schémas, assainissement HTML, gouvernance CI
+├── CHANGELOG.md              # Historique des versions et correctifs notables
+├── SECURITY.md               # Modèle de menace, protections et signalement
 ├── .env.example              # Exemple complet et documenté des variables d'environnement
 ├── eslint.config.js          # Configuration moderne ESLint 9/10 (flat config)
 └── .prettierrc               # Règles de formatage de code Prettier
@@ -93,7 +99,12 @@ node --test test/addon.test.js
 ```
 
 > [!NOTE]
-> L'ensemble des 99+ tests existants doivent passer avec succès (`0 fail`, `0 error`).
+> L'ensemble des **141+ tests** existants doivent passer avec succès (`0 fail`, `0 error`).
+>
+> [!IMPORTANT]
+> Le CI exécute **`npm test`**, **`npm run lint`** et **`npm run format:check`** : une erreur ESLint
+> ou un fichier non formaté par Prettier **fait échouer la publication de l'image Docker**.
+> Lancez `npm run format` avant de pousser.
 
 ### Vérifier le style avec ESLint
 

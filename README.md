@@ -1,66 +1,191 @@
 # ☁️🎬 Cinécloud
 
-[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fd4rk56%2Fcinecloud-blue?logo=docker)](https://github.com/D4rk56/Cinecloud/pkgs/container/cinecloud)
-[![Node Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen?logo=node.js)](https://nodejs.org/)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Debrid](https://img.shields.io/badge/debrid-AllDebrid%20%7C%20Torbox-orange)](https://alldebrid.com)
+**Addon de streaming haute performance pour Stremio et Nuvio** — débridage AllDebrid & Torbox, indexation Prowlarr (RSS + recherche à la demande), module animés, catalogues Cloud personnels et personnalisation complète depuis un panneau d'administration.
 
-**Cinécloud** est un addon auto-hébergé haute performance pour **Stremio** et **Nuvio**, spécialement conçu pour offrir une expérience de streaming fluide, instantanée et organisée.
-
-Il unifie le débridage de vos comptes **AllDebrid** et **Torbox**, synchronise vos indexeurs **Prowlarr** en tâche de fond et à la demande, intègre un parseur spécialisé pour les **animés**, et offre une interface moderne avec profils en 1 clic et panneau d'administration en temps réel.
+> Auto-hébergé, chiffré au repos, sans dépendance à un service tiers autre que les débrideurs que **vous** configurez.
 
 ---
 
-## ✨ Fonctionnalités Principales
+## 📑 Sommaire
+
+- [Prérequis](#-prérequis)
+- [Fonctionnalités](#-fonctionnalités)
+- [Démarrage rapide](#-démarrage-rapide)
+- [Utilisation](#-utilisation)
+- [Prowlarr : RSS partagé et recherche à la demande](#-prowlarr--rss-partagé-et-recherche-à-la-demande)
+- [Sources externes : Torrentio & Lumio](#-sources-externes--torrentio--lumio)
+- [Utilisation derrière AIOStreams](#-utilisation-derrière-aiostreams-et-autres-agrégateurs)
+- [Panneau d'administration](#-panneau-dadministration-admin)
+- [Référence API](#-référence-api)
+- [Variables d'environnement](#-variables-denvironnement)
+- [Dépannage & FAQ](#-dépannage--faq)
+- [Structure du projet](#-structure-du-projet)
+- [Sécurité](#-sécurité--confidentialité)
+- [Développement](#-développement-local)
+- [Licence](#-licence)
+
+---
+
+## 🧩 Prérequis
+
+| Élément        | Détail                                                                             |
+| :------------- | :--------------------------------------------------------------------------------- |
+| **Runtime**    | Node.js **≥ 22** (testé sur 24) — ou Docker / Docker Compose                       |
+| **Débrideur**  | Un compte **AllDebrid** et/ou **Torbox** (clé API)                                 |
+| **Prowlarr**   | _Optionnel mais recommandé_ : votre propre instance pour la recherche à la demande |
+| **Exposition** | Domaine **HTTPS** (Stremio desktop/mobile refusent HTTP pour une URL distante)     |
+
+---
+
+## ✨ Fonctionnalités
 
 ### ⚡ Double Support Débrideur (AllDebrid & Torbox)
 
-- **AllDebrid** : Intégration complète avec débridage instantané, flux Cloud personnels (_Mes Magnets_, _Liens Débridés_, _Historique_) et gestion du pré-cache.
-- **Torbox** : Support complet avec vérification instantanée de disponibilité et lecture directe haute performance.
-- **Résolveur Lazy intelligent** : Redirection 302 instantanée vers les flux CDN avec bascule automatique (failover) sur les miroirs disponibles.
-  - **Seuls les magnets réellement prêts sont proposés** : un téléchargement en cours (`statusCode` 0-3) n'est plus annoncé comme « ⚡ Instantané / Cloud », ce qui évitait de cliquer un flux illisible.
-  - **Quarantaine automatique (10 min)** : une cible qui échoue (magnet supprimé, aucun fichier vidéo exploitable) n'est plus réinterrogée — elle disparaît de la liste des flux et les tentatives suivantes répondent instantanément. Le journal indique désormais **la raison exacte** de l'échec.
+- **AllDebrid** : débridage instantané, flux Cloud personnels (_Mes Magnets_, _Liens Débridés_, _Historique_) et pré-cache.
+- **Torbox** : vérification instantanée de disponibilité et lecture directe haute performance.
+- **Résolveur Lazy intelligent** : redirection 302 immédiate vers le flux CDN, avec bascule automatique (_failover_) sur un autre candidat du cache si la cible est morte.
+  - **Seuls les magnets réellement prêts sont proposés** : un téléchargement en cours n'est plus annoncé comme « ⚡ Instantané / Cloud ».
+  - **Quarantaine automatique (10 min)** : une cible qui échoue n'est plus réinterrogée, disparaît de la liste des flux, et le journal indique **la raison exacte**.
+  - **Cache de résolution (10 min)** : un flux déjà résolu est servi instantanément, sans aucun appel au débrideur.
 
 ### 🛡️ Contournement des Blocages IP VPS (Cloudflare WARP)
 
-- Sur un serveur VPS ou Cloud (Hetzner, OVH, Scaleway, Oracle, etc.), les requêtes vers AllDebrid peuvent être restreintes en raison des IP de datacenters.
-- Cinécloud intègre un conteneur sidecar **Cloudflare WARP** qui achemine les requêtes de débridage via une IP résidentielle/edge propre et acceptée sans restriction.
-- Les requêtes Cinemeta, TMDB et le trafic de streaming vidéo direct restent acheminés hors proxy pour une vitesse maximale.
+- Côté serveur, un **proxy WARP** (ou tout proxy HTTP/SOCKS5) est utilisé pour AllDebrid, avec **repli direct automatique**.
+- **Torrentio** profite du même mécanisme, avec un egress dédié optionnel (`TORRENTIO_PROXY`) et un **diagnostic par tentative** (`proxy:403 • direct:403`).
 
 ### 🔍 Indexation Prowlarr & Crowdsourcing Intelligent
 
-- **Cache mutualisé SQLite (WAL)** : Tous les torrents indexés et vérifiés comme instantanément disponibles sont partagés entre utilisateurs selon le mode choisi (_Partagé_, _Local_ ou _Privé_).
-- **Synchronisation RSS d'arrière-plan** : Alimentation continue des dernières sorties films et séries.
-- **Recherche à la demande (On-Demand)** : Interrogation instantanée de **votre propre** Prowlarr lorsqu'un contenu n'est pas encore en cache.
-  - **Chacun son instance** : l'instance Prowlarr du serveur (`.env`) sert **uniquement à la synchronisation RSS** qui alimente le cache partagé — elle n'est **jamais** utilisée pour les recherches des utilisateurs. Sans clé Prowlarr personnelle, vous bénéficiez du cache mutualisé, sans recherche à la demande.
-  - **Budget borné** : une recherche à la demande ne dépasse jamais le réglage **Admin → Paramètres → « Budget d'une recherche Prowlarr à la demande »** (défaut 8 s), tentatives de repli comprises.
-  - **Disjoncteur** : après 3 échecs consécutifs, l'instance est mise en pause 10 min (plus aucune requête) au lieu de ralentir chaque zap ; le compteur repart au premier succès.
-- **Intégration Lumio** : Option pour enrichir les flux instantanés à la demande via votre manifest perso Lumio.
-- **Intégration Torrentio** : Collez l'URL de manifest Torrentio **contenant vos filtres** (Taille, Seed, Langue, Résolutions) ; l'addon récupère les torrents en cache et lit avec **votre propre clé AllDebrid/Torbox** (le débridage doit rester désactivé côté Torrentio). Cloudflare renvoyant un **403** aux IP de serveur, le proxy **WARP** est utilisé automatiquement (repli direct), et une instance Torrentio **auto-hébergée** est également acceptée.
-  - **Diagnostic** : en cas d'échec, le test affiche le résultat de **chaque tentative** (ex. `tentatives : proxy:403 • direct:403`) — vous savez immédiatement si c'est le proxy ou l'IP du serveur qui est bloqué.
-  - **Choix de l'egress** : Admin → Paramètres permet de basculer entre _Auto_ (proxy/WARP puis IP du serveur) et _Direct d'abord_. Un proxy dédié peut être fourni via `TORRENTIO_PROXY` sans toucher au WARP utilisé par AllDebrid.
-  - **Si les deux chemins sont bloqués** : hébergez votre propre instance Torrentio, placez un Cloudflare Worker en façade, ou utilisez une autre instance publique — le champ accepte n'importe quelle URL de manifest.
+- **Cache mutualisé SQLite (WAL)** : les torrents vérifiés comme instantanément disponibles sont partagés entre utilisateurs selon le mode choisi (_Partagé_, _Local_ ou _Privé_).
+- **Synchronisation RSS d'arrière-plan** : alimentation continue du cache par le serveur (et les instances partagées), avec mise en pause automatique d'une instance en échecs répétés.
+- **Recherche à la demande (On-Demand)** : interrogation de **votre propre** Prowlarr lorsqu'un contenu n'est pas encore en cache — voir la [section dédiée](#-prowlarr--rss-partagé-et-recherche-à-la-demande).
+- **Budget borné** et **disjoncteur** : une recherche ne dépasse jamais le budget configuré, et une instance lente est mise en pause 10 min au lieu de ralentir chaque zap.
 
 ### 🎨 Personnalisation de la Page Publique (Admin)
 
-- **Embed sous le titre** : un bloc de contenu (texte, liens, images, listes) affiché juste sous le titre de la page d'accueil, **entièrement configurable depuis l'admin**.
+- **Embed sous le titre** : bloc HTML (texte, liens, images, listes) affiché juste sous le titre de la page d'accueil, **entièrement configurable** depuis l'admin et **assaini par liste blanche** (aucun `script`, `iframe`, `style`, gestionnaire d'événements ni schéma `javascript:`).
 - **Iframe externe** (YouTube, widget…) : HTTPS uniquement, rendue en **bac à sable** (`sandbox`), chargement différé.
 - **Bouton Discord** : lien vers votre communauté (`discord.gg` / `discord.com` uniquement), masqué tant qu'aucune URL n'est enregistrée.
-- **Sécurité** : le HTML est **assaini par liste blanche** (aucun `script`, `iframe`, `style`, gestionnaire d'événements ni schéma `javascript:`), validé à l'enregistrement **et** au rendu — voir `SECURITY.md` § I.
 
 ### 🇯🇵 Module Spécialisé Animés (Anitomy & Mapping Fribb)
 
-- **Extraction précise des métadonnées** via `@iktakahiro/anitomy-js` (titre épuré, saison, épisode, groupe de release, résolution, codec).
-- **Mapping communautaire Fribb (`anime-lists`)** indexé en mémoire au démarrage pour une conversion instantanée `Kitsu` ↔ `IMDb` ↔ `TheTVDB` ↔ `TMDB`.
-- **Fuzzy matching** et normalisation robuste pour réconcilier les numérotations absolues (ex. _Ep 35_) avec les saisons IMDb/TMDB (ex. _S02E11_).
+- Extraction précise des métadonnées via `@iktakahiro/anitomy-js` (titre épuré, saison, épisode, groupe de release, résolution, codec).
+- Correspondance **AniDB ↔ IMDb** par la table communautaire _Fribb anime-lists_ (indexée en mémoire au démarrage), catalogues animés dédiés.
 
 ### 🎨 Formateur de Flux Épuré & Lisible
 
-- Format compact style AIOStreams en 2 colonnes :
-  - **Gauche :** `[AD ⚡]` ou `[TB ⚡]` + Résolution (`4K ⭐`, `1080p ⭐`, etc.).
-  - **Droite (4 lignes) :** statut (`⚡ IMMÉDIAT`, `⏳ TÉLÉCHARGEMENT`, `🔍 À VÉRIFIER`), titre propre, détails vidéo/audio fusionnés, langues (`🇫🇷` `🌐` `VOSTFR`) + source (`| YGG • FW`).
+- Format compact en 2 colonnes : badge de statut (`[AD ⚡]`, `[TB 🔍]`, `[AD ☁️]`) + résolution à gauche, puis 4 lignes à droite (statut normalisé, titre propre, détails vidéo/audio, langues et provenance).
+- Chaque flux déclare un **`behaviorHints`** complet (`filename`, `videoSize`, `seeders`, `indexer`, `service`, `cached`) : indispensable pour que les agrégateurs (AIOStreams) parsent correctement résolution, qualité, langue et statut de cache.
 
-### 🔗 Utilisation derrière AIOStreams (et autres agrégateurs)
+### 📱 Configuration Ergonomique & Profils en 1 Clic
+
+- **3 profils rapides** : 📱 Mobile 4G (1080p max, ~6 Go), 📺 Smart TV (4K/1080p équilibré), 🍿 Home Cinéma (4K HDR/DV sans limite).
+- **QR Code dynamique** pour installer l'addon sur TV/mobile en un éclair.
+- **Mise à jour sans réinstallation** : reconnectez-vous avec votre **UUID + mot de passe** pour modifier vos réglages.
+- **Enregistrement sans ressaisie** : après un chargement de configuration, un **jeton de session (1 h)** permet d'enregistrer vos réglages non sensibles sans retaper le mot de passe — les **clés API et le mot de passe** restent protégés.
+
+### 🛡️ Panneau d'Administration en Temps Réel (`/admin`)
+
+- Statistiques d'usage, **utilisateurs** (avec état Prowlarr par utilisateur), **journal** filtrable, **paramètres runtime**, outils de maintenance et sauvegarde SQLite.
+
+---
+
+## 🚀 Démarrage rapide
+
+### Option 1 : Docker Compose avec Cloudflare Tunnel & WARP (recommandé)
+
+```bash
+git clone https://github.com/D4rk56/Cinecloud.git
+cd Cinecloud
+cp .env.example .env      # puis ajustez si besoin
+docker compose up -d
+```
+
+Le compose fournit : le serveur, un sidecar **WARP** (contournement VPS) et un **Cloudflare Tunnel** pour l'exposition HTTPS.
+
+**Récupérer le mot de passe administrateur** (généré au premier démarrage s'il n'est pas défini) :
+
+```bash
+docker compose exec cinecloud cat data/.admin_password
+```
+
+**Configurer vos accès** : ouvrez `https://votre-domaine/` → créez un profil (mot de passe + clé AllDebrid/Torbox) → installez le manifeste dans Stremio. Le panneau d'administration est sur `https://votre-domaine/admin`.
+
+### Option 2 : Reverse Proxy (Nginx, Traefik, Caddy)
+
+Exposez le port `3000` derrière votre reverse proxy **en HTTPS**, et définissez `TRUST_PROXY=1` pour restaurer un _rate limiting_ par IP client (voir [Variables d'environnement](#-variables-denvironnement)).
+
+---
+
+## 📚 Utilisation
+
+### Créer un profil
+
+1. `https://votre-domaine/` → onglet **Nouveau Manifest / Profil**.
+2. Renseignez un **pseudo**, un **mot de passe** (≥ 4 caractères) et votre **clé AllDebrid** et/ou **Torbox**.
+3. Choisissez vos préférences : résolutions, langues (ordre de priorité), tri, taille maximale, nombre de flux, catalogues activés.
+4. Installez le manifeste dans Stremio (bouton d'installation ou QR Code).
+
+Le manifeste a la forme `https://votre-domaine/<uuid>/manifest.json`.
+
+### Modifier un profil
+
+Onglet **Gérer mon Profil / Manifest** → UUID + mot de passe → **Charger ma Configuration**. Vos réglages non sensibles peuvent ensuite être enregistrés sans retaper le mot de passe pendant 1 h (jeton de session). Modifier une **clé API** ou le **mot de passe** redemande explicitement le mot de passe.
+
+### Catalogues fournis
+
+| Catalogue                                       | Type         | Contenu                                   |
+| :---------------------------------------------- | :----------- | :---------------------------------------- |
+| Mes Liens Débridés ☁️ / Mes Séries Débridées 📺 | film / série | Liens débridés AllDebrid                  |
+| Mon Historique 🕒 / Mon Historique Séries 🕒    | film / série | Historique de lecture                     |
+| Mes Films Cloud ☁️ / Mes Séries Cloud 📺        | film / série | Fichiers présents dans votre cloud        |
+| Mes Animés (Séries) 🇯🇵 / (Films) 🇯🇵             | série / film | Contenus animés détectés                  |
+| Recommandations Films 🍿 / Séries 📺            | film / série | Suggestions basées sur votre bibliothèque |
+| Recommandations Animés (Séries) 🇯🇵 / (Films) 🎌 | série / film | Suggestions animés                        |
+
+Les artefacts (`.zip`, `.rar`, `.srt`, images, `sample`, `bonus`, `trailer`…) sont automatiquement exclus de l'historique et du cloud : **seuls les fichiers vidéo** sont proposés.
+
+---
+
+## 🔍 Prowlarr : RSS partagé et recherche à la demande
+
+Le modèle est volontairement **double**, et c'est essentiel pour la performance :
+
+| Usage                                                     | Instance utilisée                                                                                                       |
+| :-------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
+| **Synchronisation RSS** (alimentation du cache mutualisé) | L'instance du serveur (`PROWLARR_URL` / `PROWLARR_KEY` dans `.env`) **et** les instances « partagées » des utilisateurs |
+| **Recherche à la demande** (contenu non encore en cache)  | **Uniquement l'instance personnelle de l'utilisateur**                                                                  |
+
+> ⚠️ **L'instance Prowlarr du serveur n'est jamais empruntée pour les recherches d'un utilisateur.** Sans clé Prowlarr personnelle, un utilisateur bénéficie exclusivement du **cache RSS mutualisé** — jamais d'une recherche faite en son nom sur l'instance du propriétaire (cela saturait l'instance et produisait des « timeout » pour tout le monde).
+
+**Garde-fous de la recherche à la demande** :
+
+- **Budget total** : réglable dans **Admin → Paramètres** (« Budget d'une recherche Prowlarr à la demande », défaut **8 000 ms**). Toutes les tentatives de repli (pack de saison, titre alternatif) partagent ce budget : une recherche ne peut pas le dépasser.
+- **Disjoncteur** : après **3 échecs consécutifs**, l'instance est mise en pause **10 minutes** (plus aucune requête émise) ; le compteur repart au premier succès.
+- **Journal** : chaque échec indique l'**hôte**, la **durée** et le compteur (`2/3 avant pause`).
+
+Le mode choisi (`Partagé` / `Privé` / `Local`) ne conditionne que la **mise en cache commune** des résultats, jamais l'instance interrogée.
+
+---
+
+## 🔗 Sources externes : Torrentio & Lumio
+
+### Torrentio
+
+1. Configurez vos filtres (Taille, Seed, Langue, Résolutions) sur `https://torrentio.strem.fun/configure` et **laissez le débridage désactivé**.
+2. Collez l'URL de manifest obtenue dans le champ **Torrentio** de votre profil.
+3. L'addon récupère les torrents (`infoHash`) et lit avec **votre propre clé** AllDebrid/Torbox.
+
+- **403 Cloudflare** : les IP de datacenter sont bloquées. Le proxy **WARP** est utilisé automatiquement (repli direct), et le test affiche **chaque tentative** (`proxy:403 • direct:403`).
+- **Ordre des tentatives** réglable dans **Admin → Paramètres** (_Auto_ ou _Direct d'abord_).
+- **Si les deux chemins sont bloqués** : hébergez votre propre instance Torrentio, placez un Cloudflare Worker en façade, ou utilisez une autre instance publique — le champ accepte n'importe quelle URL de manifest.
+
+### Lumio
+
+Collez l'URL de votre manifest `mylumio.tv` pour enrichir les flux instantanés à la demande (optionnel).
+
+---
+
+## 🔗 Utilisation derrière AIOStreams (et autres agrégateurs)
 
 Les flux exposent un `behaviorHints` complet (`filename`, `videoSize`, `seeders`, `indexer`, `service`, `cached`) afin que les agrégateurs les **parsent correctement** (résolution, qualité, langue, taille) et les classent comme flux **débridés** avec leur statut de cache.
 
@@ -70,7 +195,7 @@ Les flux exposent un `behaviorHints` complet (`filename`, `videoSize`, `seeders`
 
 Puis vérifiez, dans cet ordre :
 
-1. **Filters → Stream Type** : c'est le piège n°1. Un filtre retirant `HTTP` (ou `P2P`/`Live`) élimine tout. **Sur une instance publique (ElfHosted), `P2P`, `HTTP` et `Live` sont désactivés de force** — nos flux déclarent `behaviorHints.service`/`cached`, ils sont donc classés **`debrid`** et ne sont pas concernés.
+1. **Filters → Stream Type** : piège n°1. Un filtre retirant `HTTP` (ou `P2P`/`Live`) élimine tout. **Sur une instance publique (ElfHosted), `P2P`, `HTTP` et `Live` sont désactivés de force** — nos flux déclarent `behaviorHints.service`/`cached`, ils sont donc classés **`debrid`** et ne sont pas concernés.
 2. **Filters → Generic Stream Attributes** : filtre **`Language` en mode _Required_** (beaucoup de releases n'ont pas de tag de langue) ou `Resolution`/`Quality` _Required_ trop stricts.
 3. **Filters → Cache** : nos flux déclarent `cached: true` (⚡ cache AllDebrid/Torbox, cloud personnel) ou `false` (« ⏳ Téléchargement », « 🔍 Vérif. au clic »). Ne pas exclure la catégorie _uncached_ si vous voulez les voir.
 4. **Addons → Cinécloud → `Timeout`** : AIOStreams **attend tous les addons** avant de répondre ; un addon lent retarde tout. Le baisser (ex. 5 000 ms) et/ou l'augmenter selon votre tolérance. Le journal admin Cinécloud affiche la latence réelle de chaque requête :
@@ -81,108 +206,154 @@ Puis vérifiez, dans cet ordre :
 **Après une mise à jour de Cinécloud, réinstallez/rafraîchissez l'addon dans AIOStreams.** AIOStreams **met en cache le manifeste** des addons (`manifestCache`, avec son propre TTL) : un redéploiement côté Cinécloud n'est pas vu immédiatement, et d'anciens avertissements (ex. `addon provides no idPrefixes`) peuvent subsister alors que le manifeste servi est déjà corrigé. Pour vérifier ce que Cinécloud expose réellement :
 
 ```bash
-curl -s https://votre-domaine/uuid/manifest.json | jq '.resources'
+curl -s https://votre-domaine/<uuid>/manifest.json | jq '.resources'
 # "meta" et "stream" doivent contenir un tableau "idPrefixes" non vide
 ```
 
-### 📱 Configuration Ergonomique & Profils en 1 Clic
+---
 
-- **3 Profils Rapides en 1 clic** :
-  - 📱 **Mobile 4G** : 1080p max, limitation de taille de fichier (~6 Go), économie de données.
-  - 📺 **Smart TV** : 4K & 1080p équilibré, tri par qualité et disponibilité immédiate.
-  - 🍿 **Home Cinéma** : 4K HDR/Dolby Vision en priorité, aucune limite de taille (Remux / Bitrate maximal).
-- **QR Code dynamique** : Affichez un QR Code dans l'interface pour installer l'addon en un éclair sur votre TV ou smartphone.
-- **Mise à jour sans réinstallation** : Modifiez vos réglages (langues, résolutions, tris) à tout moment grâce à votre UUID et mot de passe, sans réinstaller l'addon dans Stremio.
+## 🛡️ Panneau d'Administration (`/admin`)
 
-### 🛡️ Panneau d'Administration en Temps Réel (`/admin`)
+| Onglet           | Contenu                                                                                                                                                     |
+| :--------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Statistiques** | Utilisateurs inscrits, actifs sur 24 h, état des services, top des recherches                                                                               |
+| **Utilisateurs** | Liste (UUID, pseudo, **mode Prowlarr**, **Prowlarr on-demand : ✅ configuré / ❌ non configuré** + hôte), tri et suppression                                |
+| **Journal**      | Logs en direct (INFO/WARN/ERROR), recherche, pause, copie, purge                                                                                            |
+| **Paramètres**   | Budget Prowlarr à la demande, **timeout HTTP AllDebrid**, TTL du cache, **personnalisation de la page publique** (embed, iframe, Discord), egress Torrentio |
+| **Maintenance**  | Cycle RSS forcé, purge des torrents expirés, `VACUUM`/WAL, sauvegarde SQLite, nettoyage des magnets bloqués, vidage ciblé du cache                          |
 
-- **Tableau de bord KPI** : Utilisateurs inscrits, actifs 24h, torrents en cache et **Taux de Disponibilité Instantanée (%)**.
-- **Sondes de santé en direct** : Test instantané de latence et connectivité des APIs AllDebrid et Torbox.
-- **Classement des Top Recherches** : Visualisation des titres les plus demandés avec filtre textuel en direct.
-- **Gestion des comptes** : Recherche instantanée dans les utilisateurs et suppression en 1 clic.
-- **Console de logs avancée** : Filtrage par niveau (`INFO`, `WARN`, `ERROR`), recherche textuelle instantanée, bouton pause du défilement et copie dans le presse-papiers.
-- **Maintenance SQLite** : Purge des torrents expirés (+30j), optimisation (`VACUUM` / checkpoint WAL) et téléchargement de backup en 1 clic.
+> Le panneau est protégé par `ADMIN_PASSWORD` (généré automatiquement au premier démarrage, voir `data/.admin_password`). Les sessions administrateur durent 8 h.
 
 ---
 
-## 🚀 Déploiement Rapide avec Docker Compose
+## 🔌 Référence API
 
-L'image officielle est disponible sur **GitHub Container Registry (GHCR)** :
-`ghcr.io/d4rk56/cinecloud:latest` _(compatible architectures `linux/amd64` et `linux/arm64`)_.
+### Addon (protocole Stremio)
 
-### Option 1 : Déploiement avec Cloudflare Tunnel & WARP (Recommandé)
+| Route                                    | Description                                                                                          |
+| :--------------------------------------- | :--------------------------------------------------------------------------------------------------- |
+| `GET /:uuid/manifest.json`               | Manifeste de l'addon (`resources` objets avec `idPrefixes`, `catalogs`, `logo`, `background`)        |
+| `GET /:uuid/stream/:type/:id.json`       | Flux (`movie`, `series`, `anime` / `tt…`, `kitsu:…`, `tt…:s:e`)                                      |
+| `GET /:uuid/meta/:type/:id.json`         | Métadonnées (y compris les identifiants internes `ad_cloud:`, `ad_link:`, `ad_series:`, `tb_cloud:`) |
+| `GET /:uuid/catalog/:type/:id.json`      | Catalogues (voir la table des catalogues)                                                            |
+| `GET /resolve/:userRef/:imdbId/:fileRef` | Résolution _lazy_ : `302` vers le flux CDN du débrideur                                              |
 
-Ce mode lance :
+### Utilisateur
 
-1. **`warp`** : Proxy Cloudflare WARP pour contourner les blocages VPS.
-2. **`cinecloud`** : L'addon Cinécloud.
-3. **`tunnel`** : Cloudflare Tunnel éphémère (`trycloudflare.com`) pour un accès HTTPS sécurisé **sans ouvrir de port sur votre routeur**.
+| Route                                                                           | Auth                                       | Description                                                                                          |
+| :------------------------------------------------------------------------------ | :----------------------------------------- | :--------------------------------------------------------------------------------------------------- |
+| `POST /api/user/register`                                                       | —                                          | Crée un profil (mot de passe + clés) et renvoie son **UUID**                                         |
+| `POST /api/user/login`                                                          | mot de passe                               | Charge la configuration, **délivre un jeton de session** (`sessionToken`, 1 h)                       |
+| `POST /api/user/update`                                                         | mot de passe **ou** en-tête `x-user-token` | Met à jour les réglages. Le **jeton** ne suffit pas pour modifier une **clé API** ou le mot de passe |
+| `POST /api/user/delete`                                                         | mot de passe                               | Supprime définitivement le profil et ses données                                                     |
+| `POST /api/user/cleanup-magnets`                                                | mot de passe                               | Purge les magnets bloqués côté AllDebrid                                                             |
+| `POST /api/check/alldebrid` · `/torbox` · `/prowlarr` · `/lumio` · `/torrentio` | —                                          | Tests de connectivité (garde SSRF, _rate limit_ 30/min)                                              |
+| `POST /api/check/tmdb`                                                          | —                                          | Validation d'une clé TMDB                                                                            |
+| `GET /api/stats`                                                                | —                                          | Statistiques publiques (inscrits, actifs 24 h)                                                       |
 
-#### 1. Démarrer les services
+### Administrateur (en-tête `x-admin-token`)
 
-```bash
-docker compose up -d
-```
-
-#### 2. Récupérer l'URL sécurisée
-
-Affichez les logs du tunnel pour récupérer votre URL `https://xxxx.trycloudflare.com` :
-
-```bash
-docker logs cinecloud-tunnel 2>&1 | grep trycloudflare
-```
-
-#### 3. Configurer vos accès
-
-Ouvrez l'URL obtenue dans votre navigateur :
-
-- Page de configuration : `https://xxxx.trycloudflare.com/`
-- Panneau d'administration : `https://xxxx.trycloudflare.com/admin` (mot de passe auto-généré au premier démarrage, affiché dans les logs)
-
----
-
-### Option 2 : Déploiement derrière un Reverse Proxy (Nginx, Traefik, Caddy)
-
-Si vous possédez votre propre nom de domaine :
-
-```bash
-docker compose -f docker-compose.reverse-proxy.yml up -d
-```
-
-Ce mode lie le port de l'addon exclusivement sur `127.0.0.1:3000` (localhost) pour une sécurité maximale.
-
-Exemple de bloc Nginx :
-
-```nginx
-server {
-    server_name cinecloud.mondomaine.fr;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
+| Route                                                                          | Description                                                                                       |
+| :----------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------ |
+| `POST /api/admin/login`                                                        | Authentification (mot de passe admin) → jeton valable **8 h**                                     |
+| `GET /api/admin/stats` · `/logs` · `/users`                                    | Statistiques, journal filtrable, utilisateurs (**avec statut Prowlarr**)                          |
+| `GET`/`POST /api/admin/settings`                                               | Lecture / mise à jour des paramètres runtime (validation Zod + assainissement du contenu d'embed) |
+| `POST /api/admin/logs/clear` · `/cache/clear` · `/cleanup-magnets`             | Purge du journal, vidage ciblé du cache, nettoyage des magnets                                    |
+| `POST /api/admin/prowlarr/sync` · `/torrents/purge` · `/db/vacuum` · `/backup` | Cycle RSS forcé, purge des torrents expirés, optimisation SQLite, sauvegarde                      |
 
 ---
 
 ## ⚙️ Variables d'Environnement
 
-| Variable         | Description                                                    | Valeur par défaut                    |
-| :--------------- | :------------------------------------------------------------- | :----------------------------------- |
-| `PORT`           | Port d'écoute HTTP du serveur                                  | `3000`                               |
-| `NODE_ENV`       | Environnement d'exécution                                      | `production`                         |
-| `TRUST_PROXY`    | Confiance aux en-têtes `X-Forwarded-*` (`true`/`false`/entier) | `false`                              |
-| `WARP_PROXY`     | Adresse du proxy WARP sortant (HTTP ou SOCKS5)                 | `http://warp:1080`                   |
-| `APP_SECRET`     | Clé secrète AES-256-GCM pour le chiffrement des données        | _Générée automatiquement si absente_ |
-| `ADMIN_PASSWORD` | Mot de passe d'accès au panneau `/admin`                       | _Généré automatiquement si absent_   |
-| `PROWLARR_URL`   | URL de votre instance Prowlarr globale (optionnel)             | `http://prowlarr:9696`               |
-| `PROWLARR_KEY`   | Clé API de votre instance Prowlarr globale (optionnel)         | _Vide_                               |
+| Variable                     | Description                                                                                              | Défaut                               |
+| :--------------------------- | :------------------------------------------------------------------------------------------------------- | :----------------------------------- |
+| `NODE_ENV`                   | Environnement d'exécution (`production`, `development`, `test`)                                          | `production`                         |
+| `PORT`                       | Port d'écoute HTTP                                                                                       | `3000`                               |
+| `CORS_ALLOWED_ORIGINS`       | Origines supplémentaires autorisées pour `/api` (séparées par des virgules)                              | _vide_                               |
+| `TRUST_PROXY`                | Confiance aux en-têtes `X-Forwarded-*` (`true`/`false`/entier) — à activer **derrière** un reverse proxy | `false`                              |
+| `APP_SECRET`                 | Clé de chiffrement **AES-256-GCM** des clés API stockées en base                                         | _généré dans `data/.app_secret`_     |
+| `ADMIN_PASSWORD`             | Mot de passe du panneau `/admin`                                                                         | _généré dans `data/.admin_password`_ |
+| `WARP_PROXY`                 | Proxy sortant (HTTP/SOCKS5) pour AllDebrid **et** Torrentio                                              | `http://warp:1080`                   |
+| `HTTP_PROXY` / `HTTPS_PROXY` | Proxies de sortie standards (repli si `WARP_PROXY` est absent)                                           | _vide_                               |
+| `TORRENTIO_PROXY`            | Proxy **dédié** à Torrentio, prioritaire sur `WARP_PROXY`                                                | _vide_                               |
+| `PROWLARR_URL`               | Instance Prowlarr du serveur (RSS + usage du propriétaire)                                               | `http://prowlarr:9696`               |
+| `PROWLARR_KEY`               | Clé API de l'instance du serveur (`off` ou vide = aucun RSS global)                                      | _vide_                               |
+| `ALLDEBRID_API_KEY`          | Clé AllDebrid globale optionnelle (maintenance, nettoyage des magnets)                                   | _vide_                               |
+| `TORBOX_API_KEY`             | Clé Torbox globale optionnelle                                                                           | _vide_                               |
+| `TMDB_API_KEY`               | Clé TMDB optionnelle (métadonnées et affiches)                                                           | _fallback public_                    |
 
-> **Note** : les timeouts HTTP AllDebrid et Prowlarr ne se règlent **pas** par variable d'environnement mais depuis le panneau d'administration (`/admin` → Paramètres), puis enregistrés en base.
+> **Note** : les tolérances réseau se règlent aussi depuis **`/admin` → Paramètres** et sont enregistrées en base : **budget d'une recherche Prowlarr à la demande** (`prowlarrTimeoutMs`) et **timeout des requêtes AllDebrid** (`httpTimeoutMs`). Ces deux réglages sont réellement appliqués.
+
+---
+
+## 🩺 Dépannage & FAQ
+
+### Aucun flux ne s'affiche
+
+1. Vérifiez que votre clé AllDebrid/Torbox est valide (`Tester` dans le formulaire).
+2. Vérifiez vos **filtres** : résolutions sélectionnées, `hideUnknownLanguages`, taille maximale — ils s'appliquent aussi aux flux cloud.
+3. Derrière AIOStreams, suivez la [procédure dédiée](#-utilisation-derrière-aiostreams-et-autres-agrégateurs) (filtres + cache de manifeste).
+
+### « Flux indisponible » au clic
+
+La cible a échoué (magnet supprimé, ou pas encore prêt). Elle est **mise en quarantaine 10 minutes** et retirée de la liste : rafraîchissez Stremio pour choisir une autre version. Le journal admin indique la raison exacte (`0 fichier (magnet non prêt ou supprimé)`, `aucun fichier vidéo exploitable`…).
+
+### La recherche Prowlarr ne donne rien pour un utilisateur
+
+C'est **attendu** si l'utilisateur n'a pas configuré **sa propre** instance : il ne dispose alors que du cache RSS mutualisé. Vérifiez la colonne **« Prowlarr On-Demand »** dans **Admin → Utilisateurs** (✅ configuré / ❌ non configuré), et le journal (`Échec sur <hôte> après <ms>`).
+
+### Les flux sont lents à apparaître
+
+- Côté Cinécloud : le journal affiche la latence (`[Stream] … en X ms`). La recherche Prowlarr est bornée par son budget ; une instance en échecs répétés est mise en pause.
+- Côté AIOStreams : l'agrégateur attend **tous** les addons ; réduisez le `Timeout` par addon.
+
+### Torrentio renvoie 403
+
+Blocage Cloudflare des IP de datacenter. Vérifiez `WARP_PROXY` (conteneur `warp` démarré), essayez « Direct d'abord » dans **Admin → Paramètres**, ou branchez un egress dédié via `TORRENTIO_PROXY`. En dernier recours, hébergez votre instance Torrentio.
+
+### Stremio refuse de se connecter (« Failed to fetch »)
+
+Stremio desktop/mobile exigent **HTTPS** pour une URL distante. Utilisez un tunnel/reverse proxy TLS, puis réinstallez l'addon avec l'URL `https://`.
+
+---
+
+## 🗂️ Structure du projet
+
+```
+Cinecloud/
+├── index.js                  # Serveur Express : routes addon, API utilisateur & admin
+├── lib/
+│   ├── stremio.js            # Manifeste, catalogue, meta, construction des flux
+│   ├── resolver.js           # Résolution lazy (/resolve) : AllDebrid & Torbox
+│   ├── alldebrid.js          # Client AllDebrid, WARP, instant-cache, quarantaine
+│   ├── torbox.js             # Client Torbox, disponibilité, quarantaine
+│   ├── prowlarr-worker.js    # RSS, crowdsourcing, recherche à la demande (budget + disjoncteur)
+│   ├── helpers.js            # Formatage des flux, parsing titres/animés, filtrage
+│   ├── ui.js                 # Pages publiques et panneau d'administration
+│   ├── db.js                 # SQLite (node:sqlite) : utilisateurs, cache, réglages
+│   ├── net-guard.js          # Garde SSRF des requêtes sortantes
+│   ├── sanitize.js           # Assainissement du HTML d'embed (anti-XSS)
+│   ├── crypto.js             # AES-256-GCM, scrypt, permissions de fichiers
+│   ├── env.js                # Validation fail-fast des variables d'environnement
+│   ├── logger.js             # Journal circulaire exposé dans l'admin
+│   └── admin-schemas.js      # Schémas Zod (API utilisateur & admin)
+├── test/                     # node:test (addon, format des flux, sécurité)
+├── data/                     # SQLite + secrets générés (non versionné)
+└── docker-compose.yml        # Serveur + WARP + Cloudflare Tunnel
+```
+
+---
+
+## 🔒 Sécurité & Confidentialité
+
+- **Chiffrement AES-256-GCM** : les clés API sont chiffrées au repos dans la base SQLite locale.
+- **Hachage scrypt** : les mots de passe sont hachés (`scryptSync`, sel 16 o, clé 64 o) et vérifiés en temps constant (`timingSafeEqual`).
+- **Jetons** : sessions admin (8 h) et jetons utilisateur (1 h, liés à l'UUID, en-tête dédié, **jamais en URL**) ; le jeton utilisateur ne permet **jamais** de modifier une clé API ou le mot de passe.
+- **Anti-XSS** : le contenu d'embed saisi par l'admin est assaini **par reconstruction** (liste blanche close), à l'enregistrement **et** au rendu ; les iframes sont en bac à sable ; le bouton Discord n'accepte que les hôtes Discord.
+- **Anti-SSRF** : `lib/net-guard.js` bloque les cibles dangereuses (link-local, métadonnées cloud, multicast…) tout en autorisant les services auto-hébergés, y compris après résolution DNS.
+- **Rate limiting** sur les routes sensibles (authentification, vérifications API, résolution).
+- **CORS strict**, validation **Zod** de toutes les entrées, requêtes SQLite préparées.
+- Détails complets et procédure de signalement : **[SECURITY.md](SECURITY.md)**.
 
 ---
 
@@ -190,8 +361,8 @@ server {
 
 ```bash
 # 1. Cloner le projet
-git clone https://github.com/D4rk56/nuvio-alldebrid.git
-cd nuvio-alldebrid
+git clone https://github.com/D4rk56/Cinecloud.git
+cd Cinecloud
 
 # 2. Installer les dépendances
 npm install
@@ -199,18 +370,17 @@ npm install
 # 3. Lancer les tests unitaires
 npm test
 
-# 4. Démarrer en développement
+# 4. Vérifier le lint et le formatage (exigés par le CI)
+npm run lint
+npm run format:check     # corriger avec: npm run format
+
+# 5. Démarrer
 npm start
 ```
 
----
+Le CI (`.github/workflows/docker-publish.yml`) exécute **les tests, ESLint (0 erreur) et `prettier --check`**, puis publie l'image multi-arch sur GHCR.
 
-## 🔒 Sécurité & Confidentialité
-
-- **Chiffrement AES-256-GCM** : Toutes les clés API AllDebrid et Torbox sont chiffrées au repos dans la base SQLite locale.
-- **Hachage scrypt** : Les mots de passe utilisateurs sont hachés avec `crypto.scryptSync` (sel aléatoire de 16 octets, clé de 64 octets) et vérifiés en temps constant (`timingSafeEqual`).
-- **Protection Rate-Limiting** : Protection contre les attaques par force brute sur `/api/user/login`, `/api/admin/login` et les requêtes manifestes.
-- **Échappement XSS & Protection Injections** : Toutes les requêtes SQLite sont préparées (`db.prepare(...)`) et toutes les sorties HTML/logs sont strictement assainies.
+Contributions : voir **[CONTRIBUTING.md](CONTRIBUTING.md)**. Historique des correctifs : **[CHANGELOG.md](CHANGELOG.md)**.
 
 ---
 

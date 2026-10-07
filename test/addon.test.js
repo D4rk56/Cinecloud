@@ -4800,6 +4800,27 @@ test("UI Admin - le filtre de type de log fonctionne même en pause", () => {
         html.includes("embedHtml, embedIframeUrl, embedIframeHeight, discordUrl, torrentioEgress"),
         "saveSettings doit transmettre les nouveaux réglages"
     );
+
+    // Colonne « Prowlarr On-Demand » : voir qui a réellement configuré son instance
+    assert.ok(html.includes("<th>Prowlarr On-Demand</th>"), "La colonne Prowlarr On-Demand doit exister");
+    assert.ok(html.includes('colspan="7"'), "Les lignes de tableau doivent couvrir les 7 colonnes");
+    assert.ok(
+        html.includes("u.prowlarrConfigured") && html.includes("Configuré"),
+        "Le tableau doit afficher l'état de configuration Prowlarr"
+    );
+});
+
+test("Documentation - chaque variable de .env.example est documentée dans le README", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const envExample = fs.readFileSync(path.join(__dirname, "..", ".env.example"), "utf8");
+    const readme = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
+
+    const keys = [...envExample.matchAll(/^([A-Z][A-Z0-9_]+)=/gm)].map(m => m[1]);
+    assert.ok(keys.length >= 10, `Le fichier .env.example doit documenter les variables (trouvées: ${keys.length})`);
+    for (const key of keys) {
+        assert.ok(readme.includes(`\`${key}\``), `La variable ${key} doit apparaître dans le README`);
+    }
 });
 
 test("C4 - pickBestReleaseFilename retient la meilleure release d'un groupe (resolution > source > taille)", () => {
@@ -5452,4 +5473,109 @@ test("AllDebrid - l'émission des flux cloud applique disponibilité et quaranta
         source.includes("isAllDebridTargetDead"),
         "Une cible en quarantaine ne doit plus être proposée dans les flux"
     );
+});
+
+test("Session utilisateur - enregistrement sans mot de passe, clés API toujours protégées", async () => {
+    const app = require("../index");
+    const axios = require("axios");
+    const { getUsersProwlarrStatus } = require("../lib/db");
+
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    const password = "sessionTest123";
+    const created = [];
+
+    try {
+        const reg = await axios.post(`${base}/api/user/register`, {
+            password,
+            pseudo: "SessionUser",
+            apiKey: "ad_key_1234"
+        });
+        assert.equal(reg.status, 200);
+        const uuid = reg.data.uuid;
+        created.push(uuid);
+
+        // 1. Ni mot de passe ni jeton → refusé
+        try {
+            await axios.post(`${base}/api/user/update`, { uuid, maxStreams: 5 });
+            assert.fail("Doit refuser sans mot de passe ni jeton de session");
+        } catch (e) {
+            assert.equal(e.response.status, 401);
+        }
+
+        // 2. Login → jeton de session délivré
+        const login = await axios.post(`${base}/api/user/login`, { uuid, password });
+        assert.equal(login.status, 200);
+        const token = login.data.sessionToken;
+        assert.ok(typeof token === "string" && token.length >= 32, "Un jeton de session doit être délivré");
+
+        // 3. Réglage NON sensible avec le seul jeton → accepté (plus de mot de passe à ressaisir)
+        const ok = await axios.post(
+            `${base}/api/user/update`,
+            { uuid, maxStreams: 7 },
+            { headers: { "x-user-token": token } }
+        );
+        assert.equal(ok.status, 200, "L'enregistrement doit fonctionner avec le seul jeton de session");
+        assert.equal(ok.data.success, true);
+
+        // 4. Modification d'une clé API avec le seul jeton → refusée
+        try {
+            await axios.post(
+                `${base}/api/user/update`,
+                { uuid, apiKey: "nouvelle_cle_9999" },
+                { headers: { "x-user-token": token } }
+            );
+            assert.fail("La modification d'une clé API doit exiger le mot de passe");
+        } catch (e) {
+            assert.equal(e.response.status, 401);
+            assert.ok(String(e.response.data.error).includes("clés API"), "Le message doit expliquer la protection");
+        }
+
+        // 5. La même modification AVEC le mot de passe → acceptée
+        const withPass = await axios.post(`${base}/api/user/update`, {
+            uuid,
+            password,
+            apiKey: "nouvelle_cle_9999"
+        });
+        assert.equal(withPass.status, 200);
+
+        // 6. Un jeton ne vaut que pour SON UUID
+        const otherReg = await axios.post(`${base}/api/user/register`, {
+            password,
+            pseudo: "ProwlarrUser",
+            apiKey: "ad_key_5678",
+            prowlarrUrl: "http://user-prowlarr:9696",
+            prowlarrKey: "user_prowlarr_key",
+            prowlarrMode: "shared"
+        });
+        const otherUuid = otherReg.data.uuid;
+        created.push(otherUuid);
+
+        try {
+            await axios.post(
+                `${base}/api/user/update`,
+                { uuid: otherUuid, maxStreams: 3 },
+                { headers: { "x-user-token": token } }
+            );
+            assert.fail("Un jeton de session ne doit pas être réutilisable pour un autre UUID");
+        } catch (e) {
+            assert.equal(e.response.status, 401);
+        }
+
+        // 7. Statut Prowlarr on-demand exposé au panneau admin
+        const statuses = getUsersProwlarrStatus();
+        const mine = statuses.get(uuid);
+        const other = statuses.get(otherUuid);
+        assert.equal(mine.prowlarrConfigured, false, "Sans clé Prowlarr : non configuré");
+        assert.equal(other.prowlarrConfigured, true, "Avec clé Prowlarr : configuré");
+        assert.equal(other.prowlarrHost, "user-prowlarr:9696", "L'hôte de l'instance doit être exposé");
+    } finally {
+        for (const id of created) {
+            try {
+                await axios.post(`${base}/api/user/delete`, { uuid: id, password });
+            } catch (e) {}
+        }
+        server.close();
+    }
 });

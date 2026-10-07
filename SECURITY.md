@@ -114,6 +114,23 @@ blockquote, code, pre, h1…h6, figure, figcaption, table, thead, tbody, tr, td,
   Zod ; l'assainissement est appliqué **à l'enregistrement** (API admin) **et au rendu** (défense en
   profondeur, y compris pour une valeur écrite par un autre chemin).
 
+### J. Jeton de session utilisateur (`x-user-token`)
+
+- Le chargement d'une configuration (`POST /api/user/login`, UUID + mot de passe) délivre un
+  **jeton de session** de 32 octets (`randomBytes`), conservé côté serveur dans une `Map` avec
+  **expiration glissante de 1 heure** et purge périodique. Il évite de ressaisir le mot de passe
+  à chaque enregistrement depuis `/configure`.
+- **Portée volontairement limitée** : le jeton **n'autorise jamais** la modification des clés API
+  (`apiKey`, `torboxApiKey`, `prowlarrKey`, `tmdbKey`) ni du mot de passe. Dès qu'un de ces champs
+  change réellement (une valeur vide signifiant « conserver l'existant »), le mot de passe est
+  exigé et la requête est refusée en **401** avec un message explicite.
+- Le jeton est **lié à un UUID** (un jeton valide pour un compte ne fonctionne pas pour un autre),
+  transmis via un **en-tête dédié** (jamais en URL, donc absent des journaux et des référents), et
+  **révoqué immédiatement** lors d'un changement de mot de passe.
+- Côté client, il est conservé dans `sessionStorage` (effacé à la fermeture de l'onglet, jamais
+  partagé entre onglets) : en cas de vol via XSS, l'attaquant ne peut modifier que des réglages
+  non sensibles, puisque les clés API restent protégées par le mot de passe.
+
 ---
 
 ## 3. Signalement Responsable de Vulnérabilité
