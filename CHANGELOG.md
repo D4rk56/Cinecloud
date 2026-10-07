@@ -2,6 +2,20 @@
 
 Les changements notables de ce projet. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [2.4.2] — 2026-10-06
+
+### Corrigé
+
+- **Clés AllDebrid générées « à la volée »** : `checkAllDebridKey` envoyait `agent=cinécloud` à `/v4/user`, ce qui amenait AllDebrid à **créer automatiquement une clé API** dans le compte de l'utilisateur à chaque validation (mécanisme documenté « certains logiciels tiers créent une clé »). Le paramètre `agent` est supprimé : la clé n'est plus transmise qu'en en-tête `Authorization`, et aucune clé n'est plus dupliquée. Les clés déjà créées restent supprimables manuellement sur `alldebrid.com/apikeys`.
+- **« Le nouveau mot de passe doit comporter au moins 4 caractères »** alors qu'aucun changement n'était demandé : le champ vide est désormais omis côté client **et** accepté côté serveur.
+
+### Refonte de l'interface
+
+- **Thème dark « cinéma » modernisé** : palette unifiée, cartes/boutons/champs/tableaux harmonisés, responsive mobile-first, états de focus et accessibilité améliorés.
+- **Page utilisateur** : fin de l'assistant multi-étapes → **formulaire unique à sections** (Débrideur, Profil & mot de passe, Préférences, Catalogues, Sources externes).
+- **Panneau d'administration** : fin des onglets → **barre latérale de navigation** (drawer sur mobile).
+- Aucun changement d'API ni de logique : toutes les fonctions JS et les identifiants DOM sont conservés.
+
 ## [2.4.1] — 2026-10-06
 
 Dernière passe d'amélioration avant mise en pause du développement : sécurité, fiabilité du résolveur, interopérabilité AIOStreams et documentation.

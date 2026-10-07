@@ -5579,3 +5579,53 @@ test("Session utilisateur - enregistrement sans mot de passe, clés API toujours
         server.close();
     }
 });
+
+test("AllDebrid - checkAllDebridKey n'envoie plus de paramètre agent (aucune clé créée)", async () => {
+    const alldebrid = require("../lib/alldebrid");
+    const originalGet = alldebrid.alldebridApi.get;
+
+    let capturedConfig = null;
+    alldebrid.alldebridApi.get = async (url, config) => {
+        capturedConfig = config;
+        return { data: { status: "success", data: { user: { username: "test", email: "t@t", isPremium: true } } } };
+    };
+
+    try {
+        const res = await alldebrid.checkAllDebridKey("test_key");
+        assert.equal(res.valid, true);
+        assert.ok(capturedConfig, "checkAllDebridKey doit appeler l'API");
+        assert.ok(
+            !capturedConfig.params || !capturedConfig.params.agent,
+            "Le paramètre agent ne doit plus être envoyé (il créait une clé AllDebrid)"
+        );
+        assert.equal(capturedConfig.headers.Authorization, "Bearer test_key", "La clé reste en en-tête Authorization");
+    } finally {
+        alldebrid.alldebridApi.get = originalGet;
+    }
+});
+
+test("Schéma - un champ newPassword vide est accepté (aucun changement de mot de passe)", () => {
+    const { userUpdateSchema } = require("../lib/admin-schemas");
+    const parsed = userUpdateSchema.safeParse({
+        uuid: "00000000-0000-4000-8000-000000000000",
+        password: "secret",
+        newPassword: ""
+    });
+    assert.equal(parsed.success, true, "Une chaîne vide pour newPassword ne doit plus être rejetée");
+});
+
+test("UI - refonte : formulaire utilisateur en sections empilées + admin en barre latérale", () => {
+    const { renderConfigPage, renderAdminPage } = require("../lib/ui");
+    const config = renderConfigPage("register", "");
+    const admin = renderAdminPage("", {});
+
+    // Formulaire unique : le stepper est masqué et toutes les sections sont visibles
+    assert.ok(config.includes(".stepper-nav { display: none"), "Le stepper doit être masqué");
+    assert.ok(
+        config.includes(".step-content") && config.includes("display: block !important"),
+        "Toutes les sections du formulaire doivent être visibles"
+    );
+    // Admin : navigation en barre latérale
+    assert.ok(admin.includes(".admin-container > .tabs"), "La barre latérale admin doit exister");
+    assert.ok(admin.includes("flex: 0 0 240px"), "La barre latérale doit avoir une largeur fixe");
+});

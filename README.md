@@ -120,16 +120,18 @@ Exposez le port `3000` derrière votre reverse proxy **en HTTPS**, et définisse
 
 ### Créer un profil
 
-1. `https://votre-domaine/` → onglet **Nouveau Manifest / Profil**.
+1. `https://votre-domaine/` → mode **Nouveau Manifest / Profil**.
 2. Renseignez un **pseudo**, un **mot de passe** (≥ 4 caractères) et votre **clé AllDebrid** et/ou **Torbox**.
 3. Choisissez vos préférences : résolutions, langues (ordre de priorité), tri, taille maximale, nombre de flux, catalogues activés.
 4. Installez le manifeste dans Stremio (bouton d'installation ou QR Code).
 
 Le manifeste a la forme `https://votre-domaine/<uuid>/manifest.json`.
 
+> 🎨 **Interface** : la configuration s'affiche désormais en un **formulaire unique à sections** (Débrideur, Profil & mot de passe, Préférences, Catalogues, Sources externes) — fin de l'assistant multi-étapes.
+
 ### Modifier un profil
 
-Onglet **Gérer mon Profil / Manifest** → UUID + mot de passe → **Charger ma Configuration**. Vos réglages non sensibles peuvent ensuite être enregistrés sans retaper le mot de passe pendant 1 h (jeton de session). Modifier une **clé API** ou le **mot de passe** redemande explicitement le mot de passe.
+Mode **Gérer mon Profil / Manifest** → UUID + mot de passe → **Charger ma Configuration**. Vos réglages non sensibles peuvent ensuite être enregistrés sans retaper le mot de passe pendant 1 h (jeton de session). Modifier une **clé API** ou le **mot de passe** redemande explicitement le mot de passe.
 
 ### Catalogues fournis
 
@@ -214,7 +216,9 @@ curl -s https://votre-domaine/<uuid>/manifest.json | jq '.resources'
 
 ## 🛡️ Panneau d'Administration (`/admin`)
 
-| Onglet           | Contenu                                                                                                                                                     |
+Le panneau s'organise en **barre latérale de navigation** (drawer sur mobile).
+
+| Section          | Contenu                                                                                                                                                     |
 | :--------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Statistiques** | Utilisateurs inscrits, actifs sur 24 h, état des services, top des recherches                                                                               |
 | **Utilisateurs** | Liste (UUID, pseudo, **mode Prowlarr**, **Prowlarr on-demand : ✅ configuré / ❌ non configuré** + hôte), tri et suppression                                |

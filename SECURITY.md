@@ -131,6 +131,15 @@ blockquote, code, pre, h1…h6, figure, figcaption, table, thead, tbody, tr, td,
   partagé entre onglets) : en cas de vol via XSS, l'attaquant ne peut modifier que des réglages
   non sensibles, puisque les clés API restent protégées par le mot de passe.
 
+### K. Aucune création automatique de clé AllDebrid
+
+- La validation d'une clé (`checkAllDebridKey`) appelle `/v4/user` **sans le paramètre `agent`**.
+  En effet, AllDebrid interprète `agent` comme une demande de **création automatique d'une clé API**
+  dédiée dans le compte (cf. [Aide AllDebrid — gérer vos clés API](https://help.alldebrid.com/fr/faq/apikeys)),
+  ce qui dupliquait une clé « cinécloud » à chaque vérification.
+- La clé utilisateur n'est transmise **qu'en en-tête `Authorization: Bearer`** : aucune clé n'est
+  jamais générée ni modifiée côté compte, et aucun secret ne transite en URL.
+
 ---
 
 ## 3. Signalement Responsable de Vulnérabilité
