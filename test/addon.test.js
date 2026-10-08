@@ -5694,7 +5694,12 @@ test("Torbox - le résolveur attend la disponibilité au lieu de supprimer immé
 });
 
 test("Torbox - getTorboxTorrentList et getTorboxTorrentInfo appliquent bypass_cache", async () => {
-    const { getTorboxTorrentList, getTorboxTorrentInfo, isTorboxTorrentDownloaded, torboxApi } = require("../lib/torbox");
+    const {
+        getTorboxTorrentList,
+        getTorboxTorrentInfo,
+        isTorboxTorrentDownloaded,
+        torboxApi
+    } = require("../lib/torbox");
     const origGet = torboxApi.get;
     const requestedUrls = [];
 
@@ -5704,7 +5709,12 @@ test("Torbox - getTorboxTorrentList et getTorboxTorrentInfo appliquent bypass_ca
             return {
                 data: {
                     success: true,
-                    data: { id: 999, download_state: "cached", download_present: true, files: [{ id: 1, name: "video.mkv" }] }
+                    data: {
+                        id: 999,
+                        download_state: "cached",
+                        download_present: true,
+                        files: [{ id: 1, name: "video.mkv" }]
+                    }
                 }
             };
         }
