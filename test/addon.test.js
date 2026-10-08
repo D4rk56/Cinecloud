@@ -3611,30 +3611,47 @@ test("Docker compose volume consistency, Prowlarr on-demand stream display, and 
     };
 
     try {
-        const streamRes = await handleStream(
-            {
-                apiKey: "mock_ad_key",
-                prowlarrUrl: "http://mock-prowlarr:9696",
-                prowlarrKey: "mock_key",
-                prowlarrMode: "direct",
-                allowDownload: false // L'utilisateur n'a PAS coché allowDownload (valeur par défaut)
-            },
+        const baseConfig = {
+            apiKey: "mock_ad_key",
+            prowlarrUrl: "http://mock-prowlarr:9696",
+            prowlarrKey: "mock_key",
+            prowlarrMode: "direct"
+        };
+
+        // Sans l'option « Téléchargement » : les torrents Prowlarr non instantanés sont masqués.
+        const hiddenRes = await handleStream(
+            { ...baseConfig, allowDownload: false },
             "series",
             "tt14755822:1:1",
             {},
             "http://localhost:3000",
             "mock-user"
         );
+        assert.ok(hiddenRes && Array.isArray(hiddenRes.streams), "handleStream doit retourner un tableau de flux");
+        const hiddenProwlarr = hiddenRes.streams.filter(s => s.name.includes("[AD") && s.title.includes("Prowlarr"));
+        assert.equal(
+            hiddenProwlarr.length,
+            0,
+            "Les torrents Prowlarr non instantanés doivent être masqués sans l'option Téléchargement"
+        );
 
-        assert.ok(streamRes && Array.isArray(streamRes.streams), "handleStream doit retourner un tableau de flux");
-        // Les deux flux Prowlarr (épisode individuel + pack de saison) doivent être présents dans la liste !
-        const prowlarrStreams = streamRes.streams.filter(s => s.name.includes("[AD") && s.title.includes("Prowlarr"));
+        // Avec l'option « Téléchargement » cochée : ils réapparaissent.
+        const shownRes = await handleStream(
+            { ...baseConfig, allowDownload: true },
+            "series",
+            "tt14755822:1:1",
+            {},
+            "http://localhost:3000",
+            "mock-user"
+        );
+        assert.ok(shownRes && Array.isArray(shownRes.streams), "handleStream doit retourner un tableau de flux");
+        const shownProwlarr = shownRes.streams.filter(s => s.name.includes("[AD") && s.title.includes("Prowlarr"));
         assert.ok(
-            prowlarrStreams.length >= 1,
-            `Les torrents Prowlarr doivent s'afficher dans Stremio même si allowDownload=false (obtenu: ${prowlarrStreams.length})`
+            shownProwlarr.length >= 1,
+            `Les torrents Prowlarr doivent s'afficher avec allowDownload=true (obtenu: ${shownProwlarr.length})`
         );
         assert.ok(
-            prowlarrStreams.some(s => s.title.includes("YggTorrent")),
+            shownProwlarr.some(s => s.title.includes("YggTorrent")),
             "Doit contenir la release YggTorrent"
         );
     } finally {
@@ -3860,15 +3877,16 @@ test("Stremio Streams - handleStream with active AllDebrid pre-validation displa
     };
 
     try {
+        const baseConfig = {
+            apiKey: "mock_ad_key",
+            prowlarrUrl: "http://mock-prowlarr:9696",
+            prowlarrKey: "mock_key",
+            prowlarrMode: "direct",
+            preValidateCache: true
+        };
+
         const res = await handleStream(
-            {
-                apiKey: "mock_ad_key",
-                prowlarrUrl: "http://mock-prowlarr:9696",
-                prowlarrKey: "mock_key",
-                prowlarrMode: "direct",
-                preValidateCache: true,
-                allowDownload: false
-            },
+            { ...baseConfig, allowDownload: false },
             "movie",
             "tt8888888",
             {},
@@ -3883,11 +3901,24 @@ test("Stremio Streams - handleStream with active AllDebrid pre-validation displa
         assert.ok(readyStream, "Le flux ready doit être présent");
         assert.ok(readyStream.name.includes("⚡"), "Le flux ready doit porter l'éclair ⚡");
         assert.ok(readyStream.title.includes("⚡ IMMÉDIAT"), "Le statut ready doit être normalisé ⚡ IMMÉDIAT");
+        assert.ok(!unreadyStream, "Le flux unready doit être masqué sans l'option Téléchargement");
 
-        assert.ok(unreadyStream, "Le flux unready doit être présent");
-        assert.ok(unreadyStream.name.includes("⏳"), "Le flux unready doit porter le sablier ⏳");
+        // Avec l'option Téléchargement : le flux non prêt réapparaît avec le sablier.
+        const resDownload = await handleStream(
+            { ...baseConfig, allowDownload: true },
+            "movie",
+            "tt8888888",
+            {},
+            "http://localhost:3000",
+            "mock-user"
+        );
+        const unreadyDownload = resDownload.streams.find(s =>
+            s.url.includes("dddd111122223333444455556666777788889999")
+        );
+        assert.ok(unreadyDownload, "Le flux unready doit réapparaître avec allowDownload=true");
+        assert.ok(unreadyDownload.name.includes("⏳"), "Le flux unready doit porter le sablier ⏳");
         assert.ok(
-            unreadyStream.title.includes("⏳ TÉLÉCHARGEMENT (12 seeders)"),
+            unreadyDownload.title.includes("⏳ TÉLÉCHARGEMENT (12 seeders)"),
             "Le statut unready doit être normalisé avec seeders"
         );
     } finally {
@@ -4519,7 +4550,10 @@ test("Torrentio - les infoHash sont résolus avec la clé de l'addon (jamais l'U
             debridProvider: "alldebrid",
             torrentioUrl:
                 "https://torrentio.strem.fun/sort=size%7Clanguage=french%7Cqualityfilter=480p,other,cam,unknown/manifest.json",
-            prowlarrKey: "off"
+            prowlarrKey: "off",
+            // Les torrents Torrentio ne sont pas marqués « instantané » ici : l'option
+            // Téléchargement est donc requise pour qu'ils soient listés (comportement voulu).
+            allowDownload: true
         };
 
         const result = await handleStream(

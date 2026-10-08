@@ -306,6 +306,10 @@ La cible a échoué (magnet supprimé, ou pas encore prêt). Elle est **mise en 
 
 C'est **attendu** si l'utilisateur n'a pas configuré **sa propre** instance : il ne dispose alors que du cache RSS mutualisé. Vérifiez la colonne **« Prowlarr On-Demand »** dans **Admin → Utilisateurs** (✅ configuré / ❌ non configuré), et le journal (`Échec sur <hôte> après <ms>`).
 
+### Je ne vois plus certains résultats (⏳ Téléchargement / 🔍 Vérif. au clic)
+
+**Par défaut, seuls les flux instantanés (⚡) sont affichés.** Les résultats non encore mis en cache chez le débrideur (⏳/🔍) sont **masqués**, sauf si l'utilisateur a coché l'option **« Téléchargement »** dans sa configuration (`allowDownload`). Cochez cette option pour qu'ils réapparaissent (la lecture démarre alors le téléchargement avant de lancer le flux).
+
 ### Les flux sont lents à apparaître
 
 - Côté Cinécloud : le journal affiche la latence (`[Stream] … en X ms`). La recherche Prowlarr est bornée par son budget ; une instance en échecs répétés est mise en pause.

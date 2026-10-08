@@ -2,6 +2,12 @@
 
 Les changements notables de ce projet. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [2.4.4] — 2026-10-06
+
+### Changement
+
+- **Les flux non instantanés (⏳ Téléchargement / 🔍 Vérif. au clic) sont désormais masqués par défaut.** Ils ne s'affichent que si l'utilisateur a coché l'option **« Téléchargement »** (`allowDownload`) dans sa configuration. Par défaut, seuls les flux **⚡ instantanés** (déjà en cache chez le débrideur) sont listés — cohérent avec le fait que, sans cette option, le résolveur ne pouvait pas les lancer (suppression immédiate du torrent non prêt).
+
 ## [2.4.3] — 2026-10-06
 
 ### Corrigé
