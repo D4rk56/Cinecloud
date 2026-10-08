@@ -5692,3 +5692,50 @@ test("Torbox - le résolveur attend la disponibilité au lieu de supprimer immé
         "Un torrent fraîchement ajouté doit être re-vérifié (attente bornée) avant abandon"
     );
 });
+
+test("Torbox - getTorboxTorrentList et getTorboxTorrentInfo appliquent bypass_cache", async () => {
+    const { getTorboxTorrentList, getTorboxTorrentInfo, isTorboxTorrentDownloaded, torboxApi } = require("../lib/torbox");
+    const origGet = torboxApi.get;
+    const requestedUrls = [];
+
+    torboxApi.get = async function (url) {
+        requestedUrls.push(url);
+        if (url.includes("mylist?id=999")) {
+            return {
+                data: {
+                    success: true,
+                    data: { id: 999, download_state: "cached", download_present: true, files: [{ id: 1, name: "video.mkv" }] }
+                }
+            };
+        }
+        return { data: { success: true, data: [] } };
+    };
+
+    try {
+        // 1. Sans bypassCache
+        await getTorboxTorrentList("tb_key_test");
+        assert.ok(requestedUrls.includes("/torrents/mylist"), "Appel standard sans paramètre bypass_cache");
+
+        // 2. Avec bypassCache
+        await getTorboxTorrentList("tb_key_test", null, { bypassCache: true });
+        assert.ok(
+            requestedUrls.some(u => u === "/torrents/mylist?bypass_cache=true"),
+            "Appel avec bypass_cache=true sans id"
+        );
+
+        // 3. getTorboxTorrentInfo doit TOUJOURS inclure bypass_cache=true et l'id
+        const info = await getTorboxTorrentInfo(999, "tb_key_test");
+        assert.ok(info && info.id === 999, "Les infos du torrent doivent être retournées");
+        assert.ok(
+            requestedUrls.some(u => u.includes("/torrents/mylist?id=999&bypass_cache=true")),
+            "getTorboxTorrentInfo doit forcer bypass_cache=true pour éviter l'état figé à 600s"
+        );
+
+        // 4. isTorboxTorrentDownloaded reconnaît download_present
+        assert.equal(isTorboxTorrentDownloaded({ download_present: true }), true);
+        assert.equal(isTorboxTorrentDownloaded({ download_state: "cached" }), true);
+        assert.equal(isTorboxTorrentDownloaded({ download_state: "metaDL" }), false);
+    } finally {
+        torboxApi.get = origGet;
+    }
+});

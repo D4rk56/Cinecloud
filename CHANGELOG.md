@@ -6,7 +6,9 @@ Les changements notables de ce projet. Format inspiré de [Keep a Changelog](htt
 
 ### Corrigé
 
-- **Torbox : la lecture échouait même pour un torrent déjà en cache.** D'après la documentation officielle, `download_state` vaut **`cached`** pour un torrent présent sur les serveurs (et **`uploading`** pour un torrent en seed) — ces deux états sont lisibles immédiatement, y compris quand `progress` vaut 0 (rien à télécharger) et `download_finished` est absent. `isTorboxTorrentDownloaded` ne reconnaissait que `completed`/`progress===1`/`download_finished`, donc tout torrent en cache était jugé « pas prêt » puis supprimé → bascule. Les états `cached` et `uploading` sont désormais pris en compte.
+- **Torbox : bypass du cache API (600 s) sur `mylist`** : l'API Torbox met en cache la liste `/torrents/mylist` pendant 10 minutes (600 secondes). Lors de la création d'un torrent, son état initial (`metaDL`) restait figé pour toutes les vérifications de `getTorboxTorrentInfo` sans le paramètre `bypass_cache=true`, même si le torrent était rapidement devenu disponible sur les serveurs de Torbox. `getTorboxTorrentInfo` applique désormais systématiquement `bypass_cache=true` pour interroger l'état frais en temps réel.
+- **Récupération en cas de doublon (`already exists`)** : si l'ajout d'un torrent répond que l'élément existe déjà (torrent absent de la liste initiale à cause du cache de 600 s), le résolveur rafraîchit immédiatement `mylist` avec `bypass_cache=true` pour retrouver son identifiant au lieu d'échouer.
+- **Disponibilité Torbox enrichie** : `isTorboxTorrentDownloaded` reconnaît également `download_present: true` en plus de `cached`, `uploading`, `completed` et `progress === 1`.
 - **`isTorboxTorrentReady`** : la liste d'exclusion est passée en correspondance par inclusion et enrichie (`stalled (no seeds)`, `queued`, `metaDL`, `checkingResumeData`), corrigeant l'affichage des torrents cloud non lisibles.
 
 ## [2.4.4] — 2026-10-06
