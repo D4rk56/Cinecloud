@@ -4719,17 +4719,31 @@ test("Torbox - isTorboxTorrentReady écarte les torrents non téléchargés", ()
     assert.equal(isTorboxTorrentReady(null), false);
     assert.equal(isTorboxTorrentReady({ download_state: "downloading" }), false);
     assert.equal(isTorboxTorrentReady({ download_state: "stalled" }), false);
+    assert.equal(
+        isTorboxTorrentReady({ download_state: "stalled (no seeds)" }),
+        false,
+        "« stalled (no seeds) » doit être exclu"
+    );
     assert.equal(isTorboxTorrentReady({ download_state: "paused" }), false);
+    assert.equal(isTorboxTorrentReady({ download_state: "queued" }), false);
+    assert.equal(isTorboxTorrentReady({ download_state: "metaDL" }), false);
     assert.equal(isTorboxTorrentReady({ download_state: "completed" }), true);
     assert.equal(isTorboxTorrentReady({ download_state: "cached" }), true);
+    assert.equal(isTorboxTorrentReady({ download_state: "uploading" }), true, "Un torrent en seed est lisible");
     assert.equal(isTorboxTorrentReady({}), true, "Un état inconnu ne doit pas masquer un fichier lisible");
 
-    // Preuve positive (utilisée par le resolver) : sémantique historique conservée
+    // Preuve positive (utilisée par le resolver) : un torrent en cache ou en seed est lisible.
     assert.equal(isTorboxTorrentDownloaded({ download_state: "downloading" }), false);
     assert.equal(isTorboxTorrentDownloaded({}), false);
     assert.equal(isTorboxTorrentDownloaded({ download_finished: true }), true);
     assert.equal(isTorboxTorrentDownloaded({ progress: 1 }), true);
     assert.equal(isTorboxTorrentDownloaded({ download_state: "completed" }), true);
+    assert.equal(
+        isTorboxTorrentDownloaded({ download_state: "cached" }),
+        true,
+        "Un torrent en cache Torbox est lisible"
+    );
+    assert.equal(isTorboxTorrentDownloaded({ download_state: "uploading" }), true, "Un torrent en seed est lisible");
 });
 
 test("Torbox - les torrents cloud non téléchargés ne produisent aucun flux", async () => {

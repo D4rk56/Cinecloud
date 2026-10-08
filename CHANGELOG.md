@@ -2,6 +2,13 @@
 
 Les changements notables de ce projet. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [2.4.5] — 2026-10-06
+
+### Corrigé
+
+- **Torbox : la lecture échouait même pour un torrent déjà en cache.** D'après la documentation officielle, `download_state` vaut **`cached`** pour un torrent présent sur les serveurs (et **`uploading`** pour un torrent en seed) — ces deux états sont lisibles immédiatement, y compris quand `progress` vaut 0 (rien à télécharger) et `download_finished` est absent. `isTorboxTorrentDownloaded` ne reconnaissait que `completed`/`progress===1`/`download_finished`, donc tout torrent en cache était jugé « pas prêt » puis supprimé → bascule. Les états `cached` et `uploading` sont désormais pris en compte.
+- **`isTorboxTorrentReady`** : la liste d'exclusion est passée en correspondance par inclusion et enrichie (`stalled (no seeds)`, `queued`, `metaDL`, `checkingResumeData`), corrigeant l'affichage des torrents cloud non lisibles.
+
 ## [2.4.4] — 2026-10-06
 
 ### Changement
