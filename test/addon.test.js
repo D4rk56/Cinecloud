@@ -5629,3 +5629,18 @@ test("UI - refonte : formulaire utilisateur en sections empilées + admin en bar
     assert.ok(admin.includes(".admin-container > .tabs"), "La barre latérale admin doit exister");
     assert.ok(admin.includes("flex: 0 0 240px"), "La barre latérale doit avoir une largeur fixe");
 });
+
+test("Torbox - le résolveur attend la disponibilité au lieu de supprimer immédiatement", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const source = fs.readFileSync(path.join(__dirname, "..", "lib", "resolver.js"), "utf8");
+
+    assert.ok(
+        source.includes("isTorboxTorrentDownloaded(info) || !uploadedNew || allowDownload"),
+        "Le résolveur doit ré-essayer tant qu'un torrent Torbox fraîchement ajouté n'est pas prêt"
+    );
+    assert.ok(
+        /maxAttempts\s*=\s*uploadedNew\s*\?\s*8\s*:\s*2/.test(source),
+        "Un torrent fraîchement ajouté doit être re-vérifié (attente bornée) avant abandon"
+    );
+});

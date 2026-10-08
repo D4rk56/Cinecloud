@@ -2,6 +2,12 @@
 
 Les changements notables de ce projet. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [2.4.3] — 2026-10-06
+
+### Corrigé
+
+- **Torbox + Prowlarr on-demand : aucun flux ne se lançait.** Le résolveur vérifiait une seule fois si un torrent fraîchement ajouté était `download_finished` ; sinon il le **supprimait immédiatement** et basculait vers un autre candidat. Or un torrent **déjà en cache** Torbox peut rester marqué « en téléchargement » 1 à 3 secondes après l'ajout. Le résolveur attend désormais une disponibilité certaine (fichiers peuplés + `download_finished`) dans un **budget borné** (8 re-vérifications espacées de 700 ms pour un torrent fraîchement ajouté), sans régression pour le chemin « torrent déjà présent » ni pour le mode _download_.
+
 ## [2.4.2] — 2026-10-06
 
 ### Corrigé
