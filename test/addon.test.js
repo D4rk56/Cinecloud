@@ -5678,19 +5678,43 @@ test("UI - refonte : formulaire utilisateur en sections empilées + admin en bar
     assert.ok(admin.includes("flex: 0 0 240px"), "La barre latérale doit avoir une largeur fixe");
 });
 
-test("Torbox - le résolveur attend la disponibilité au lieu de supprimer immédiatement", () => {
+test("Torbox - le résolveur dispose d'un budget étendu et attend la disponibilité", () => {
     const fs = require("node:fs");
     const path = require("node:path");
     const source = fs.readFileSync(path.join(__dirname, "..", "lib", "resolver.js"), "utf8");
 
     assert.ok(
-        source.includes("isTorboxTorrentDownloaded(info) || !uploadedNew || allowDownload"),
+        source.includes("isTorboxTorrentDownloaded(info) || allowDownload"),
         "Le résolveur doit ré-essayer tant qu'un torrent Torbox fraîchement ajouté n'est pas prêt"
     );
     assert.ok(
-        /maxAttempts\s*=\s*uploadedNew\s*\?\s*8\s*:\s*2/.test(source),
-        "Un torrent fraîchement ajouté doit être re-vérifié (attente bornée) avant abandon"
+        /maxAttempts\s*=\s*22/.test(source),
+        "Le résolveur doit disposer d'un budget étendu (~22 vérifications, 25-30s) pour couvrir la transition metaDL"
     );
+});
+
+test("Torbox - createTorboxTorrent enrichit les magnets avec des trackers publics", async () => {
+    const { createTorboxTorrent, torboxApi } = require("../lib/torbox");
+    const origPost = torboxApi.post;
+    let postedBody = "";
+
+    torboxApi.post = async function (url, body) {
+        postedBody = body;
+        return {
+            data: {
+                success: true,
+                data: { torrent_id: 12345, hash: "abcdef1234567890abcdef1234567890abcdef12" }
+            }
+        };
+    };
+
+    try {
+        await createTorboxTorrent("abcdef1234567890abcdef1234567890abcdef12", "mock_key");
+        assert.ok(postedBody.includes("tr="), "Le magnet envoyé doit contenir des trackers publics pour accélérer metaDL");
+        assert.ok(postedBody.includes("opentrackr.org"), "Le tracker opentrackr doit être inclus");
+    } finally {
+        torboxApi.post = origPost;
+    }
 });
 
 test("Torbox - getTorboxTorrentList et getTorboxTorrentInfo appliquent bypass_cache", async () => {

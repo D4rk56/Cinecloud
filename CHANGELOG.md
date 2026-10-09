@@ -2,6 +2,26 @@
 
 Les changements notables de ce projet. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [2.4.6] — 2026-10-09
+
+### Corrigé
+
+- **Torbox : fiabilisation de l'état `metaDL` et résolution de flux** :
+  - **Injection de trackers publics** : les liens magnets générés par `createTorboxTorrent` intègrent désormais une liste de trackers publics fiables, réduisant drastiquement le temps d'acquisition DHT des métadonnées Torbox.
+  - **Bypass du cache dès l'interrogation initiale** : la vérification initiale des torrents du compte utilisateur via `getTorboxTorrentList` utilise `bypassCache: true`, empêchant la désynchronisation avec le cache serveur de 600 s et évitant les erreurs de faux doublon (`already exists`).
+  - **Budget de polling étendu** : le résolveur alloue désormais jusqu'à 22 vérifications espacées progressivement (800 ms à 1100 ms, ~25 s au total), assurant la transition complète des torrents volumineux de l'état `metaDL` vers `cached` sans suppression prématurée.
+  - **Protection du cache partagé** : la bascule automatique sur échec Torbox ne purge plus l'entrée SQLite partagée (`cached_torrents`), préservant la validité des flux pour les utilisateurs AllDebrid.
+  - **Pré-vérification instantanée lors du basculement** : lors d'une bascule de flux avec `allowDownload: false`, le résolveur vérifie la disponibilité instantanée (`checkInstantTorbox`) avant toute tentative.
+- **Catalogues Stremio : cache partagé de classification TMDB** :
+  - Mise en mémoire cache LRU (`cloudClassifyCache`, 90 s) de la classification des magnets du cloud utilisateur. Lorsque Stremio interroge simultanément les catalogues Films, Séries et Animes au même instant, la classification est instantanément réutilisée sans requêtes TMDB redondantes ni spam d'avertissement de saturation (200 premiers magnets).
+
+### Refonte de l'interface
+
+- **Panneau d'administration : confort visuel et console de logs en haute résolution** :
+  - **Disposition élargie** : passage d'une largeur étroite (1100 px) à une mise en page fluide (`max-width: 1680px; width: 96%`), offrant plus de 1400 px d'espace de travail pour les journaux et les tables.
+  - **Console de logs tabulaire et ergonomique** : horodatage tabulaire fixe (`10:18:03`), badges de niveaux colorés et uniformes (`[INFO]`, `[WARN]`, `[ERROR]`, `[DEBUG]`), modules identifiés avec largeur minimale, badge d'utilisateur dédié (`👤 Salon`) et retour à la ligne naturel (`word-break: break-word`) empêchant le découpage chaotique des mots.
+  - **Table des utilisateurs responsive** : défilement horizontal fluide sans compression des colonnes, badges de statut et boutons d'actions protégés contre les retours à la ligne intempestifs.
+
 ## [2.4.5] — 2026-10-06
 
 ### Corrigé
