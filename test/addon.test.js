@@ -1547,6 +1547,21 @@ test("Torbox - unlockTorboxFileTarget resolves tb_cloud and handles direct URLs"
     try {
         let capturedConfig = null;
         torboxApi.get = async function (url, config) {
+            if (url.includes("/torrents/mylist")) {
+                return {
+                    status: 200,
+                    data: {
+                        success: true,
+                        data: {
+                            id: 456,
+                            files: [
+                                { id: 0, name: "sample.mkv", size: 5000000 },
+                                { id: 1, name: "Movie.1080p.mkv", size: 4500000000 }
+                            ]
+                        }
+                    }
+                };
+            }
             capturedConfig = config;
             return { status: 200, data: { success: true, data: "https://storage.torbox.app/cdn/resolved.mp4" } };
         };
@@ -1558,6 +1573,16 @@ test("Torbox - unlockTorboxFileTarget resolves tb_cloud and handles direct URLs"
         assert.equal(capturedConfig.params.torrent_id, "456");
         assert.equal(capturedConfig.params.file_id, "78");
         assert.equal(capturedConfig.headers.Authorization, "Bearer key123");
+
+        // Fichier avec index 0 (cas classique d'un film mono-fichier) : ne doit PAS être rejeté par !fileId
+        const cloudRefZero = await unlockTorboxFileTarget("key123", "tb_cloud:456:0");
+        assert.equal(cloudRefZero, "https://storage.torbox.app/cdn/resolved.mp4");
+        assert.equal(capturedConfig.params.file_id, "0");
+
+        // Cible sans fileId (format émis par le catalogue films Cloud) : auto-découverte du meilleur fichier vidéo
+        const cloudRefNoFile = await unlockTorboxFileTarget("key123", "tb_cloud:456");
+        assert.equal(cloudRefNoFile, "https://storage.torbox.app/cdn/resolved.mp4");
+        assert.equal(capturedConfig.params.file_id, 1, "Le fichier le plus volumineux (id 1) doit être sélectionné");
     } finally {
         torboxApi.get = origGet;
     }
@@ -5710,12 +5735,15 @@ test("Torbox - createTorboxTorrent enrichit les magnets avec des trackers public
 
     try {
         await createTorboxTorrent("abcdef1234567890abcdef1234567890abcdef12", "mock_key");
-        const decodedBody = decodeURIComponent(postedBody);
+        const magnetStr =
+            typeof FormData !== "undefined" && postedBody instanceof FormData
+                ? String(postedBody.get("magnet") || "")
+                : decodeURIComponent(postedBody);
         assert.ok(
-            decodedBody.includes("tr="),
+            magnetStr.includes("tr="),
             "Le magnet envoyé doit contenir des trackers publics pour accélérer metaDL"
         );
-        assert.ok(decodedBody.includes("opentrackr.org"), "Le tracker opentrackr doit être inclus");
+        assert.ok(magnetStr.includes("opentrackr.org"), "Le tracker opentrackr doit être inclus");
     } finally {
         torboxApi.post = origPost;
     }
@@ -5781,7 +5809,7 @@ test("Torbox - getTorboxTorrentList et getTorboxTorrentInfo appliquent bypass_ca
 test("Torbox - createTorboxTorrent configure seed=3 et add_only_if_cached=true sans allowDownload", async () => {
     const { createTorboxTorrent, torboxApi } = require("../lib/torbox");
     const origPost = torboxApi.post;
-    let postedBody = "";
+    let postedBody = null;
 
     torboxApi.post = async function (url, body) {
         postedBody = body;
@@ -5793,15 +5821,28 @@ test("Torbox - createTorboxTorrent configure seed=3 et add_only_if_cached=true s
         };
     };
 
+    function extractParam(body, key) {
+        if (typeof FormData !== "undefined" && body instanceof FormData) {
+            return body.get(key);
+        }
+        const str = decodeURIComponent(String(body || ""));
+        const match = str.match(new RegExp(`${key}=([^&]*)`));
+        return match ? match[1] : null;
+    }
+
     try {
         // Mode direct (allowDownload=false) : streaming instantané -> 0 slot de seed (seed=3) et 0 slot BitTorrent (add_only_if_cached)
         await createTorboxTorrent("1111111111111111111111111111111111111111", "mock_key", {
             allowDownload: false
         });
-        const decoded = decodeURIComponent(postedBody);
-        assert.ok(decoded.includes("seed=3"), "seed=3 doit être envoyé pour interdire le seeding (0 slot consommé)");
-        assert.ok(
-            decoded.includes("add_only_if_cached=true"),
+        assert.equal(
+            extractParam(postedBody, "seed"),
+            "3",
+            "seed=3 doit être envoyé pour interdire le seeding (0 slot consommé)"
+        );
+        assert.equal(
+            extractParam(postedBody, "add_only_if_cached"),
+            "true",
             "add_only_if_cached=true doit être envoyé pour ne pas déclencher de téléchargement seeder"
         );
 
@@ -5809,10 +5850,10 @@ test("Torbox - createTorboxTorrent configure seed=3 et add_only_if_cached=true s
         await createTorboxTorrent("1111111111111111111111111111111111111111", "mock_key", {
             allowDownload: true
         });
-        const decodedDownload = decodeURIComponent(postedBody);
-        assert.ok(decodedDownload.includes("seed=1"), "seed=1 doit être envoyé en mode download");
-        assert.ok(
-            !decodedDownload.includes("add_only_if_cached=true"),
+        assert.equal(extractParam(postedBody, "seed"), "1", "seed=1 doit être envoyé en mode download");
+        assert.equal(
+            extractParam(postedBody, "add_only_if_cached"),
+            null,
             "add_only_if_cached ne doit pas être forcé en mode download"
         );
     } finally {
