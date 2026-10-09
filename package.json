@@ -1,6 +1,6 @@
 {
   "name": "cinecloud",
-  "version": "2.4.0",
+  "version": "2.4.6",
   "description": "Cinécloud - Addon de streaming haute performance pour Stremio et Nuvio avec AllDebrid, Torbox et Prowlarr",
   "main": "index.js",
   "repository": {

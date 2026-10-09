@@ -132,7 +132,7 @@ test("Stremio - handleManifest returns valid manifest with Cinécloud branding, 
     );
     assert.equal(manifest.name, "Cinécloud");
     assert.equal(manifest.id, "org.nuvio.alldebrid");
-    assert.equal(manifest.version, "2.4.0");
+    assert.equal(manifest.version, "2.4.6");
     assert.equal(manifest.logo, "https://cinecloud.fr/logo.png");
     assert.equal(manifest.background, "https://cinecloud.fr/background.png");
     assert.deepEqual(manifest.behaviorHints, { configurable: true, configurationRequired: false });
