@@ -5777,3 +5777,102 @@ test("Torbox - getTorboxTorrentList et getTorboxTorrentInfo appliquent bypass_ca
         torboxApi.get = origGet;
     }
 });
+
+test("Torbox - createTorboxTorrent configure seed=3 et add_only_if_cached=true sans allowDownload", async () => {
+    const { createTorboxTorrent, torboxApi } = require("../lib/torbox");
+    const origPost = torboxApi.post;
+    let postedBody = "";
+
+    torboxApi.post = async function (url, body) {
+        postedBody = body;
+        return {
+            data: {
+                success: true,
+                data: { torrent_id: 111, hash: "1111111111111111111111111111111111111111" }
+            }
+        };
+    };
+
+    try {
+        // Mode direct (allowDownload=false) : streaming instantané -> 0 slot de seed (seed=3) et 0 slot BitTorrent (add_only_if_cached)
+        await createTorboxTorrent("1111111111111111111111111111111111111111", "mock_key", {
+            allowDownload: false
+        });
+        const decoded = decodeURIComponent(postedBody);
+        assert.ok(decoded.includes("seed=3"), "seed=3 doit être envoyé pour interdire le seeding (0 slot consommé)");
+        assert.ok(
+            decoded.includes("add_only_if_cached=true"),
+            "add_only_if_cached=true doit être envoyé pour ne pas déclencher de téléchargement seeder"
+        );
+
+        // Mode téléchargement actif (allowDownload=true) : seed=1 et pas de add_only_if_cached
+        await createTorboxTorrent("1111111111111111111111111111111111111111", "mock_key", {
+            allowDownload: true
+        });
+        const decodedDownload = decodeURIComponent(postedBody);
+        assert.ok(decodedDownload.includes("seed=1"), "seed=1 doit être envoyé en mode download");
+        assert.ok(
+            !decodedDownload.includes("add_only_if_cached=true"),
+            "add_only_if_cached ne doit pas être forcé en mode download"
+        );
+    } finally {
+        torboxApi.post = origPost;
+    }
+});
+
+test("Torbox - getTorboxSlotStatus et freeTorboxSlotIfFull gèrent les limites par offre", async () => {
+    const torbox = require("../lib/torbox");
+    const origGet = torbox.torboxApi.get;
+    const origPost = torbox.torboxApi.post;
+    let deletedTorrentId = null;
+
+    torbox.torboxApi.get = async function (url) {
+        if (url.includes("/user/me")) {
+            return {
+                data: {
+                    success: true,
+                    data: { plan: 1, email: "user@test.fr" } // Plan Essential = 3 slots
+                }
+            };
+        }
+        if (url.includes("/torrents/mylist")) {
+            return {
+                data: {
+                    success: true,
+                    data: [
+                        { id: 10, name: "Vieux film", download_state: "cached" }, // Purgeable
+                        { id: 20, name: "Téléchargement 1", download_state: "downloading" }, // Actif
+                        { id: 30, name: "Téléchargement 2", download_state: "downloading" }, // Actif
+                        { id: 40, name: "Téléchargement 3", download_state: "uploading" } // Actif
+                    ]
+                }
+            };
+        }
+        return { data: { success: true, data: [] } };
+    };
+
+    torbox.torboxApi.post = async function (url, body) {
+        if (url.includes("/torrents/controltorrent")) {
+            deletedTorrentId = body?.torrent_id;
+            return { data: { success: true } };
+        }
+        return { data: { success: true } };
+    };
+
+    try {
+        const status = await torbox.getTorboxSlotStatus("mock_key");
+        assert.equal(status.maxSlots, 3, "Plan Essential doit avoir un plafond de 3 slots");
+        assert.equal(status.usedSlots, 3, "3 torrents actifs (downloading/uploading) occupent 3 slots");
+        assert.equal(status.availableSlots, 0, "Aucun slot disponible restant");
+        assert.equal(status.purgeableList.length, 1, "1 torrent terminé/inactif purgeable trouvé");
+
+        // Tentative de libération d'un slot
+        const freed = await torbox.freeTorboxSlotIfFull("mock_key");
+        assert.equal(freed, true, "freeTorboxSlotIfFull doit réussir à libérer un slot");
+        assert.equal(deletedTorrentId, 10, "Le plus ancien torrent inactif (id 10) doit avoir été supprimé");
+    } finally {
+        torbox.torboxApi.get = origGet;
+        torbox.torboxApi.post = origPost;
+    }
+});
+
