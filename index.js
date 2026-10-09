@@ -212,11 +212,7 @@ app.use((req, res, next) => {
     //  - stream/ et /resolve/ : URLs signées et dynamiques → jamais de cache.
     //  - tout le reste (pages HTML, /api/*) : no-store, aucune donnée de
     //    session dans un proxy partagé.
-    const isCacheable =
-        pathUrl.endsWith("/manifest.json") ||
-        pathUrl.includes("/meta/") ||
-        pathUrl === "/logo.png" ||
-        pathUrl === "/background.png";
+    const isCacheable = pathUrl.includes("/meta/") || pathUrl === "/logo.png" || pathUrl === "/background.png";
     if (isCacheable) {
         res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
     } else {
