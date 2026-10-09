@@ -5710,8 +5710,12 @@ test("Torbox - createTorboxTorrent enrichit les magnets avec des trackers public
 
     try {
         await createTorboxTorrent("abcdef1234567890abcdef1234567890abcdef12", "mock_key");
-        assert.ok(postedBody.includes("tr="), "Le magnet envoyé doit contenir des trackers publics pour accélérer metaDL");
-        assert.ok(postedBody.includes("opentrackr.org"), "Le tracker opentrackr doit être inclus");
+        const decodedBody = decodeURIComponent(postedBody);
+        assert.ok(
+            decodedBody.includes("tr="),
+            "Le magnet envoyé doit contenir des trackers publics pour accélérer metaDL"
+        );
+        assert.ok(decodedBody.includes("opentrackr.org"), "Le tracker opentrackr doit être inclus");
     } finally {
         torboxApi.post = origPost;
     }
