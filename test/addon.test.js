@@ -4720,21 +4720,22 @@ test("Torbox - 422 requestdl : le détail est remonté et la cible mise en quara
     }
 });
 
-test("Torbox - une URL CDN contenant la clé API est refusée (anti-fuite)", async () => {
+test("Torbox - une URL CDN contenant le token Torbox est acceptée pour la lecture", async () => {
     const { getTorboxStreamUrl, torboxApi } = require("../lib/torbox");
     const origGet = torboxApi.get;
-    const origWarn = console.warn;
-    console.warn = () => {};
     try {
         torboxApi.get = async () => ({
             status: 200,
-            data: { success: true, data: "https://cdn.torbox.app/x?token=leaked_key" }
+            data: { success: true, data: "https://cdn.torbox.app/x?token=user_key" }
         });
-        const r = await getTorboxStreamUrl(999003, 3, "leaked_key");
-        assert.equal(r, null, "Une URL CDN contenant la clé doit être refusée");
+        const r = await getTorboxStreamUrl(999003, 3, "user_key");
+        assert.equal(
+            r,
+            "https://cdn.torbox.app/x?token=user_key",
+            "L'URL de streaming fournie par Torbox doit être acceptée"
+        );
     } finally {
         torboxApi.get = origGet;
-        console.warn = origWarn;
     }
 });
 

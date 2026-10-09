@@ -82,10 +82,10 @@ CinéCloud FR est conçu selon le principe de **défense en profondeur** (_defen
   en **paramètre de requête** (`?token=…`). Un appel avec le seul en-tête `Authorization` échoue en
   **HTTP 422** (`{"detail":[{"loc":["query","token"],"msg":"Field required"}]}`) — vérifié sur
   `api.torbox.app`. L'en-tête est donc envoyé en plus du paramètre, jamais à sa place.
-- Mesures compensatoires appliquées : la requête est **strictement côté serveur** (jamais exposée au
-  client), l'URL complète n'est **jamais journalisée** (seuls le code HTTP et le message d'erreur de
-  l'API le sont), et l'URL CDN retournée est **rejetée** si elle contient la clé, garantissant que le
-  client ne reçoit qu'une URL signée sans secret.
+- Mesures compensatoires appliquées : la requête vers l'API Torbox est **strictement côté serveur**
+  (l'URL de requête et le token ne sont jamais journalisés dans les journaux du serveur, seuls le code
+  HTTP et le message d'erreur de l'API le sont), et la redirection HTTP 302 vers le permalien CDN de
+  streaming n'est transmise qu'au client Stremio authentifié configuré avec ce compte.
 
 ### I. Personnalisation de la page publique (embed admin) — anti-XSS
 
