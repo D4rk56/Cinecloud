@@ -1,5 +1,7 @@
 "use strict";
 
+process.env.NODE_ENV = "test";
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
@@ -17,6 +19,7 @@ const {
     deleteCachedTorrent,
     purgeOldCachedTorrents,
     createUser,
+    deleteUser,
     getSharedProwlarrInstances
 } = require("../lib/db");
 
@@ -996,28 +999,35 @@ test("Crowdsourcing & Prowlarr Modes - getSharedProwlarrInstances & URL validati
     assert.equal(isLocalOrPrivateUrl("invalid-url"), true);
 
     // 2. Création d'utilisateurs avec différents modes Prowlarr
-    const sharedUuid = "user-shared-" + Date.now();
-    const encShared = encryptConfig({ prowlarrUrl: "https://prowlarr.shared.net", prowlarrKey: "key-shared" });
-    createUser(sharedUuid, "hash", encShared, "SharedUser", "shared");
+    const ts = Date.now();
+    const sharedUuid = `user-shared-${ts}`;
+    const privateUuid = `user-private-${ts}`;
+    const localUuid = `user-local-${ts}`;
+    try {
+        const encShared = encryptConfig({ prowlarrUrl: "https://prowlarr.shared.net", prowlarrKey: "key-shared" });
+        createUser(sharedUuid, "hash", encShared, `SharedUser_${ts}`, "shared");
 
-    const privateUuid = "user-private-" + Date.now();
-    const encPrivate = encryptConfig({ prowlarrUrl: "https://prowlarr.private.net", prowlarrKey: "key-private" });
-    createUser(privateUuid, "hash", encPrivate, "PrivateUser", "private");
+        const encPrivate = encryptConfig({ prowlarrUrl: "https://prowlarr.private.net", prowlarrKey: "key-private" });
+        createUser(privateUuid, "hash", encPrivate, `PrivateUser_${ts}`, "private");
 
-    const localUuid = "user-local-" + Date.now();
-    const encLocal = encryptConfig({ prowlarrUrl: "", prowlarrKey: "" });
-    createUser(localUuid, "hash", encLocal, "LocalUser", "local");
+        const encLocal = encryptConfig({ prowlarrUrl: "", prowlarrKey: "" });
+        createUser(localUuid, "hash", encLocal, `LocalUser_${ts}`, "local");
 
-    const sharedInstances = getSharedProwlarrInstances();
-    const hasShared = sharedInstances.some(
-        inst => inst.url === "https://prowlarr.shared.net" && inst.key === "key-shared"
-    );
-    const hasPrivate = sharedInstances.some(inst => inst.url === "https://prowlarr.private.net");
-    const hasLocal = sharedInstances.some(inst => inst.userUuid === localUuid);
+        const sharedInstances = getSharedProwlarrInstances();
+        const hasShared = sharedInstances.some(
+            inst => inst.url === "https://prowlarr.shared.net" && inst.key === "key-shared"
+        );
+        const hasPrivate = sharedInstances.some(inst => inst.url === "https://prowlarr.private.net");
+        const hasLocal = sharedInstances.some(inst => inst.userUuid === localUuid);
 
-    assert.ok(hasShared, "L'instance en mode 'shared' doit être incluse dans le crowdsourcing");
-    assert.ok(!hasPrivate, "L'instance en mode 'private' NE doit PAS être partagée pour le RSS");
-    assert.ok(!hasLocal, "L'instance en mode 'local' n'a pas de serveur Prowlarr");
+        assert.ok(hasShared, "L'instance en mode 'shared' doit être incluse dans le crowdsourcing");
+        assert.ok(!hasPrivate, "L'instance en mode 'private' NE doit PAS être partagée pour le RSS");
+        assert.ok(!hasLocal, "L'instance en mode 'local' n'a pas de serveur Prowlarr");
+    } finally {
+        deleteUser(sharedUuid);
+        deleteUser(privateUuid);
+        deleteUser(localUuid);
+    }
 });
 
 test("Catalogs - disableCatalogs hides catalogs from manifest and catalog route", async () => {
@@ -1787,23 +1797,28 @@ test("User API - Update retains existing API keys when inputs are left empty", a
     const port = server.address().port;
     const base = `http://127.0.0.1:${port}`;
 
+    const initialPseudo = `TestKeyRetention_${Date.now()}`;
+    const updatedPseudo = `TestKeyRetentionUpdated_${Date.now()}`;
+    let uuid = null;
+
     try {
         // 1. Enregistrement d'un utilisateur avec clés valides
         const regRes = await axios.post(`${base}/api/user/register`, {
             password: "updatePassword123",
-            pseudo: "TestKeyRetention",
+            pseudo: initialPseudo,
             apiKey: "original_alldebrid_key_abc123",
             torboxApiKey: "original_torbox_key_xyz789",
+            prowlarrUrl: "http://user-prowlarr:9696",
             prowlarrKey: "original_prowlarr_key_456"
         });
         assert.equal(regRes.status, 200);
-        const uuid = regRes.data.uuid;
+        uuid = regRes.data.uuid;
 
         // 2. Mise à jour avec champs de clé vides (comme envoyé par le formulaire quand l'utilisateur ne les modifie pas)
         const updateRes = await axios.post(`${base}/api/user/update`, {
             uuid,
             password: "updatePassword123",
-            pseudo: "TestKeyRetentionUpdated",
+            pseudo: updatedPseudo,
             apiKey: "",
             torboxApiKey: "",
             prowlarrKey: "",
@@ -1830,13 +1845,15 @@ test("User API - Update retains existing API keys when inputs are left empty", a
             "La clé Prowlarr ne doit pas être écrasée par une chaîne vide"
         );
         assert.equal(loginRes.data.config.resolutions, "1080p", "Les réglages modifiés doivent bien être mis à jour");
-
-        // 4. Nettoyage
-        await axios.post(`${base}/api/user/delete`, {
-            uuid,
-            password: "updatePassword123"
-        });
     } finally {
+        if (uuid) {
+            try {
+                await axios.post(`${base}/api/user/delete`, {
+                    uuid,
+                    password: "updatePassword123"
+                });
+            } catch (e) {}
+        }
         server.close();
     }
 });
@@ -3297,7 +3314,7 @@ test("API Routes - POST /api/user/cleanup-magnets and POST /api/admin/cleanup-ma
     try {
         const regRes = await axios.post(`${base}/api/user/register`, {
             password: testPassword,
-            pseudo: "CleanupUser",
+            pseudo: `CleanupUser_${Date.now()}`,
             apiKey: "test_ad_key_1234"
         });
         assert.equal(regRes.status, 200);
@@ -5563,7 +5580,7 @@ test("Session utilisateur - enregistrement sans mot de passe, clés API toujours
     try {
         const reg = await axios.post(`${base}/api/user/register`, {
             password,
-            pseudo: "SessionUser",
+            pseudo: `SessionUser_${Date.now()}`,
             apiKey: "ad_key_1234"
         });
         assert.equal(reg.status, 200);
@@ -5617,7 +5634,7 @@ test("Session utilisateur - enregistrement sans mot de passe, clés API toujours
         // 6. Un jeton ne vaut que pour SON UUID
         const otherReg = await axios.post(`${base}/api/user/register`, {
             password,
-            pseudo: "ProwlarrUser",
+            pseudo: `ProwlarrUser_${Date.now()}`,
             apiKey: "ad_key_5678",
             prowlarrUrl: "http://user-prowlarr:9696",
             prowlarrKey: "user_prowlarr_key",
@@ -5915,5 +5932,205 @@ test("Torbox - getTorboxSlotStatus et freeTorboxSlotIfFull gèrent les limites p
     } finally {
         torbox.torboxApi.get = origGet;
         torbox.torboxApi.post = origPost;
+    }
+});
+
+test("Utilisateurs - Pseudo obligatoire, taille minimale et détection des doublons (insensible à la casse)", async () => {
+    const app = require("../index");
+    const axios = require("axios");
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    const uniquePseudo = `UserUnique_${Date.now()}`;
+    let createdUuid = null;
+
+    try {
+        // 1. Inscription sans pseudo -> refusée 400
+        try {
+            await axios.post(`${base}/api/user/register`, {
+                password: "password123",
+                apiKey: "ad_dummy_key"
+            });
+            assert.fail("L'inscription sans pseudo doit être refusée");
+        } catch (e) {
+            assert.equal(e.response.status, 400);
+            assert.ok(e.response.data.error.includes("pseudo") || e.response.data.error.includes("Pseudo"));
+        }
+
+        // 2. Inscription avec pseudo trop court (< 2 car) -> refusée 400
+        try {
+            await axios.post(`${base}/api/user/register`, {
+                pseudo: "A",
+                password: "password123",
+                apiKey: "ad_dummy_key"
+            });
+            assert.fail("L'inscription avec un pseudo de 1 caractère doit être refusée");
+        } catch (e) {
+            assert.equal(e.response.status, 400);
+        }
+
+        // 3. Inscription valide avec pseudo
+        const res = await axios.post(`${base}/api/user/register`, {
+            pseudo: uniquePseudo,
+            password: "password123",
+            apiKey: "ad_dummy_key"
+        });
+        assert.equal(res.status, 200);
+        createdUuid = res.data.uuid;
+
+        // 4. Inscription avec le MÊME pseudo (casse différente) -> refusée 400
+        try {
+            await axios.post(`${base}/api/user/register`, {
+                pseudo: uniquePseudo.toLowerCase(),
+                password: "password456",
+                apiKey: "ad_dummy_key_2"
+            });
+            assert.fail("L'inscription avec un doublon de pseudo doit être refusée");
+        } catch (e) {
+            assert.equal(e.response.status, 400);
+            assert.ok(e.response.data.error.includes("déjà utilisé"));
+        }
+
+        // 5. Mise à jour de son propre compte en conservant son pseudo -> acceptée 200
+        const updateSelf = await axios.post(`${base}/api/user/update`, {
+            uuid: createdUuid,
+            password: "password123",
+            pseudo: uniquePseudo,
+            maxStreams: 2
+        });
+        assert.equal(updateSelf.status, 200);
+
+        // 6. Création d'un second utilisateur
+        const res2 = await axios.post(`${base}/api/user/register`, {
+            pseudo: `${uniquePseudo}_other`,
+            password: "password123",
+            apiKey: "ad_dummy_key_3"
+        });
+        const secondUuid = res2.data.uuid;
+
+        // Tentative du second utilisateur de voler le pseudo du premier -> refusée 400
+        try {
+            await axios.post(`${base}/api/user/update`, {
+                uuid: secondUuid,
+                password: "password123",
+                pseudo: uniquePseudo
+            });
+            assert.fail("Un utilisateur ne doit pas pouvoir prendre le pseudo d'un autre utilisateur");
+        } catch (e) {
+            if (e.name === "AssertionError") throw e;
+            assert.equal(e.response.status, 400);
+            assert.ok(e.response.data.error.includes("déjà utilisé"));
+        }
+
+        // Nettoyage second utilisateur
+        await axios.post(`${base}/api/user/delete`, { uuid: secondUuid, password: "password123" });
+    } finally {
+        if (createdUuid) {
+            try {
+                await axios.post(`${base}/api/user/delete`, { uuid: createdUuid, password: "password123" });
+            } catch (e) {}
+        }
+        server.close();
+    }
+});
+
+test("Prowlarr - Validation de l'instance à la saisie et absence de fallback interne pour les tiers", async () => {
+    const app = require("../index");
+    const axios = require("axios");
+    const { getUserByUuid } = require("../lib/db");
+    const { decryptConfig } = require("../lib/crypto");
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+    let createdUuid = null;
+
+    try {
+        // 1. Inscription sans clé Prowlarr -> prowlarrUrl ne doit pas être "http://prowlarr:9696"
+        const regWithoutProwlarr = await axios.post(`${base}/api/user/register`, {
+            pseudo: `NoProwlarr_${Date.now()}`,
+            password: "password123",
+            apiKey: "ad_mock_key"
+        });
+        assert.equal(regWithoutProwlarr.status, 200);
+        createdUuid = regWithoutProwlarr.data.uuid;
+
+        const userRow = getUserByUuid(createdUuid);
+        const cfg = decryptConfig(userRow.configEncrypted);
+        assert.equal(
+            cfg.prowlarrUrl,
+            "",
+            "Sans clé Prowlarr, prowlarrUrl doit rester vide et non http://prowlarr:9696"
+        );
+        assert.equal(cfg.prowlarrKey, "off");
+
+        // 2. Inscription avec une fausse instance Prowlarr injoignable -> rejetée 400
+        try {
+            await axios.post(`${base}/api/user/register`, {
+                pseudo: `BadProwlarr_${Date.now()}`,
+                password: "password123",
+                apiKey: "ad_mock_key",
+                prowlarrUrl: "http://instance-inexistante-prowlarr:9696",
+                prowlarrKey: "fake_api_key_123"
+            });
+            assert.fail("L'inscription avec une instance Prowlarr inaccessible doit être rejetée");
+        } catch (e) {
+            assert.equal(e.response.status, 400);
+            assert.ok(e.response.data.error.includes("Prowlarr"));
+        }
+    } finally {
+        if (createdUuid) {
+            try {
+                await axios.post(`${base}/api/user/delete`, { uuid: createdUuid, password: "password123" });
+            } catch (e) {}
+        }
+        server.close();
+    }
+});
+
+test("Maintenance - Purge des utilisateurs inactifs (+30 jours)", async () => {
+    const app = require("../index");
+    const axios = require("axios");
+    const { createUser, deleteUser, getUserByUuid, purgeInactiveUsers, db } = require("../lib/db");
+    const { encryptConfig } = require("../lib/crypto");
+    const server = app.listen(0);
+    const port = server.address().port;
+    const base = `http://127.0.0.1:${port}`;
+
+    const adminPass = process.env.ADMIN_PASSWORD || "admin123";
+    const loginRes = await axios.post(`${base}/api/admin/login`, { password: adminPass });
+    const adminToken = loginRes.data.token;
+
+    const activeUuid = "active-user-" + Date.now();
+    const inactiveUuid = "inactive-user-" + Date.now();
+
+    try {
+        // Créer un utilisateur actif récent
+        createUser(activeUuid, "hash", encryptConfig({ apiKey: "key" }), "ActifRecent", "local");
+        // Créer un utilisateur inactif (> 35 jours)
+        createUser(inactiveUuid, "hash", encryptConfig({ apiKey: "key" }), "InactifAncien", "local");
+        const thirtyFiveDaysAgo = Math.floor(Date.now() / 1000) - 35 * 86400;
+        db.prepare("UPDATE users SET last_active_at = ? WHERE uuid = ?").run(thirtyFiveDaysAgo, inactiveUuid);
+
+        // Appel direct fonction db
+        const result = purgeInactiveUsers(30 * 86400);
+        assert.ok(result.count >= 1, "Au moins 1 utilisateur inactif doit avoir été purgé");
+
+        // Vérifier que l'inactif a disparu et l'actif est toujours là
+        assert.equal(getUserByUuid(inactiveUuid), null, "L'utilisateur inactif doit avoir été supprimé");
+        assert.notEqual(getUserByUuid(activeUuid), null, "L'utilisateur actif récent doit être conservé");
+
+        // Tester également l'endpoint d'administration /api/admin/maintenance/purge-inactive-users
+        const apiRes = await axios.post(
+            `${base}/api/admin/maintenance/purge-inactive-users`,
+            {},
+            { headers: { "x-admin-token": adminToken } }
+        );
+        assert.equal(apiRes.status, 200);
+        assert.equal(apiRes.data.success, true);
+        assert.ok(typeof apiRes.data.purged === "number");
+    } finally {
+        deleteUser(activeUuid);
+        deleteUser(inactiveUuid);
+        server.close();
     }
 });

@@ -79,7 +79,9 @@ const {
     clearCachedTorrents,
     clearMoviesCache,
     getTopSearches,
-    clearSearchQueries
+    clearSearchQueries,
+    isPseudoTaken,
+    purgeInactiveUsers
 } = require("./lib/db");
 
 const { hashPassword, verifyPassword, encryptConfig, decryptConfig } = require("./lib/crypto");
@@ -276,7 +278,7 @@ app.use((req, res, next) => {
 // Limitation de débit sur les routes sensibles (Protection Force Brute) avec validation proxy assouplie
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 30, // 30 requêtes par fenêtre
+    max: process.env.NODE_ENV === "test" ? 1000 : 30, // 30 requêtes par fenêtre (étendu en test)
     standardHeaders: true,
     legacyHeaders: false,
     validate: { xForwardedForHeader: false, trustProxy: false },
@@ -480,12 +482,48 @@ app.post("/api/user/register", authLimiter, validateAdmin({ body: userRegisterSc
                 .json({ error: "Un mot de passe d'au moins 4 caractères est requis pour sécuriser vos réglages." });
         }
 
+        const cleanPseudo = (pseudo && pseudo.trim()) || "";
+        if (!cleanPseudo || cleanPseudo.length < 2) {
+            return res.status(400).json({ error: "Le pseudo est obligatoire (au moins 2 caractères)." });
+        }
+        if (isPseudoTaken(cleanPseudo)) {
+            return res.status(400).json({ error: "Ce pseudo est déjà utilisé. Veuillez en choisir un autre." });
+        }
+
+        const rawProwlarrKey = (prowlarrKey && typeof prowlarrKey === "string" ? prowlarrKey.trim() : "") || "off";
+        const rawProwlarrUrl = (prowlarrUrl && typeof prowlarrUrl === "string" ? prowlarrUrl.trim() : "") || "";
+
+        let finalProwlarrUrl = "";
+        let finalProwlarrKey = "off";
+
+        if (rawProwlarrKey && rawProwlarrKey !== "off") {
+            if (!rawProwlarrUrl) {
+                return res
+                    .status(400)
+                    .json({ error: "Une URL d'instance Prowlarr est requise lorsque vous renseignez une clé API." });
+            }
+            if (isForbiddenTargetUrl(rawProwlarrUrl)) {
+                return res
+                    .status(400)
+                    .json({ error: "L'URL Prowlarr pointe vers une cible interdite (link-local / métadonnées)." });
+            }
+            const { checkProwlarrConnectivity } = require("./lib/prowlarr-worker");
+            const prowCheck = await checkProwlarrConnectivity(rawProwlarrUrl, rawProwlarrKey);
+            if (!prowCheck.success || !prowCheck.valid) {
+                return res.status(400).json({
+                    error: `Instance Prowlarr invalide ou injoignable : ${prowCheck.error || "échec de connexion"}. Veuillez corriger vos identifiants ou laisser la clé Prowlarr vide.`
+                });
+            }
+            finalProwlarrUrl = prowCheck.suggestedUrl || rawProwlarrUrl;
+            finalProwlarrKey = rawProwlarrKey;
+        }
+
         const uuid = crypto.randomUUID();
         const passwordHash = hashPassword(password);
         const resolvedProwlarrMode =
             prowlarrMode === "shared" || prowlarrMode === "private" || prowlarrMode === "local"
                 ? prowlarrMode
-                : prowlarrKey && prowlarrKey.trim() && prowlarrKey !== "off"
+                : finalProwlarrKey !== "off"
                   ? "shared"
                   : "local";
 
@@ -493,7 +531,7 @@ app.post("/api/user/register", authLimiter, validateAdmin({ body: userRegisterSc
             debridProvider,
             apiKey: apiKey || "",
             torboxApiKey: torboxApiKey || "",
-            pseudo: (pseudo && pseudo.trim()) || "",
+            pseudo: cleanPseudo,
             tmdbKey: (tmdbKey && tmdbKey.trim()) || "default",
             cacheMode: cacheMode === "off" ? "off" : "on",
             langPref: langPref || "multi_vff,vff,vfi,multi,vf,vostfr",
@@ -503,8 +541,8 @@ app.post("/api/user/register", authLimiter, validateAdmin({ body: userRegisterSc
             maxSizeGb: maxSizeGb !== undefined && maxSizeGb !== null && maxSizeGb !== "" ? Number(maxSizeGb) : 150,
             maxStreams: Number(maxStreams) || 0,
             prioritizeCloud: req.body.prioritizeCloud !== undefined ? Boolean(req.body.prioritizeCloud) : true,
-            prowlarrUrl: (prowlarrUrl && prowlarrUrl.trim()) || "http://prowlarr:9696",
-            prowlarrKey: (prowlarrKey && prowlarrKey.trim()) || "off",
+            prowlarrUrl: finalProwlarrUrl,
+            prowlarrKey: finalProwlarrKey,
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: Boolean(allowDownload),
             preValidateCache: req.body.preValidateCache !== undefined ? Boolean(req.body.preValidateCache) : true,
@@ -517,16 +555,6 @@ app.post("/api/user/register", authLimiter, validateAdmin({ body: userRegisterSc
                   ? enabledCatalogs.split(",")
                   : ALL_CATALOGS.map(c => c.id)
         };
-
-        // Garde SSRF de second ordre : autorise les services auto-hébergés (prowlarr:9696,
-        // host.docker.internal, LAN) mais refuse les cibles dangereuses (link-local/métadonnées).
-        if (configData.prowlarrKey && configData.prowlarrKey.trim() && configData.prowlarrKey !== "off") {
-            if (isForbiddenTargetUrl(configData.prowlarrUrl)) {
-                return res
-                    .status(400)
-                    .json({ error: "L'URL Prowlarr pointe vers une cible interdite (link-local / métadonnées)." });
-            }
-        }
 
         const configEncrypted = encryptConfig(configData);
         createUser(uuid, passwordHash, configEncrypted, configData.pseudo, configData.prowlarrMode);
@@ -617,7 +645,7 @@ app.post("/api/user/login", authLimiter, validateAdmin({ body: userLoginSchema }
 });
 
 // Mise à jour de la configuration existante
-app.post("/api/user/update", authLimiter, validateAdmin({ body: userUpdateSchema }), (req, res) => {
+app.post("/api/user/update", authLimiter, validateAdmin({ body: userUpdateSchema }), async (req, res) => {
     try {
         const {
             uuid,
@@ -700,6 +728,64 @@ app.post("/api/user/update", authLimiter, validateAdmin({ body: userUpdateSchema
                       : "alldebrid"
                 : currentConfig.debridProvider || "alldebrid";
 
+        if (pseudo !== undefined) {
+            const cleanPseudo = pseudo.trim();
+            if (cleanPseudo.length < 2) {
+                return res.status(400).json({ error: "Le pseudo doit comporter au moins 2 caractères." });
+            }
+            if (isPseudoTaken(cleanPseudo, uuid.trim())) {
+                return res.status(400).json({ error: "Ce pseudo est déjà utilisé par un autre compte." });
+            }
+        }
+
+        let nextProwlarrKey = currentConfig.prowlarrKey || "off";
+        if (prowlarrKey !== undefined && typeof prowlarrKey === "string") {
+            const trimmedKey = prowlarrKey.trim();
+            if (trimmedKey === "off") {
+                nextProwlarrKey = "off";
+            } else if (trimmedKey !== "") {
+                nextProwlarrKey = trimmedKey;
+            }
+        }
+
+        let nextProwlarrUrl = currentConfig.prowlarrUrl || "";
+        if (prowlarrUrl !== undefined && typeof prowlarrUrl === "string") {
+            const trimmedUrl = prowlarrUrl.trim();
+            if (trimmedUrl !== "") {
+                nextProwlarrUrl = trimmedUrl;
+            }
+        }
+
+        if (nextProwlarrKey === "off") {
+            nextProwlarrUrl = "";
+        } else {
+            const prowlarrChanged =
+                nextProwlarrKey !== (currentConfig.prowlarrKey || "off") ||
+                nextProwlarrUrl !== (currentConfig.prowlarrUrl || "");
+
+            if (!nextProwlarrUrl) {
+                return res.status(400).json({ error: "Une URL d'instance Prowlarr est requise." });
+            }
+            if (isForbiddenTargetUrl(nextProwlarrUrl)) {
+                return res
+                    .status(400)
+                    .json({ error: "L'URL Prowlarr pointe vers une cible interdite (link-local / métadonnées)." });
+            }
+
+            if (prowlarrChanged) {
+                const { checkProwlarrConnectivity } = require("./lib/prowlarr-worker");
+                const prowCheck = await checkProwlarrConnectivity(nextProwlarrUrl, nextProwlarrKey);
+                if (!prowCheck.success || !prowCheck.valid) {
+                    return res.status(400).json({
+                        error: `Instance Prowlarr invalide ou injoignable : ${prowCheck.error || "échec de connexion"}. Veuillez corriger vos identifiants ou laisser la clé Prowlarr vide.`
+                    });
+                }
+                if (prowCheck.suggestedUrl) {
+                    nextProwlarrUrl = prowCheck.suggestedUrl;
+                }
+            }
+        }
+
         const updatedConfig = {
             debridProvider: resolvedDebridProvider,
             apiKey: apiKey && typeof apiKey === "string" && apiKey.trim() ? apiKey.trim() : currentConfig.apiKey || "",
@@ -730,11 +816,8 @@ app.post("/api/user/update", authLimiter, validateAdmin({ body: userUpdateSchema
                     : currentConfig.prioritizeCloud !== undefined
                       ? Boolean(currentConfig.prioritizeCloud)
                       : true,
-            prowlarrUrl: (prowlarrUrl && prowlarrUrl.trim()) || currentConfig.prowlarrUrl || "http://prowlarr:9696",
-            prowlarrKey:
-                prowlarrKey && typeof prowlarrKey === "string" && prowlarrKey.trim()
-                    ? prowlarrKey.trim()
-                    : currentConfig.prowlarrKey || "off",
+            prowlarrUrl: nextProwlarrUrl,
+            prowlarrKey: nextProwlarrKey,
             prowlarrMode: resolvedProwlarrMode,
             allowDownload: allowDownload !== undefined ? Boolean(allowDownload) : Boolean(currentConfig.allowDownload),
             preValidateCache:
@@ -761,16 +844,6 @@ app.post("/api/user/update", authLimiter, validateAdmin({ body: userUpdateSchema
                   ? enabledCatalogs.split(",")
                   : currentConfig.enabledCatalogs
         };
-
-        // Garde SSRF de second ordre : autorise les services auto-hébergés (prowlarr:9696,
-        // host.docker.internal, LAN) mais refuse les cibles dangereuses (link-local/métadonnées).
-        if (updatedConfig.prowlarrKey && updatedConfig.prowlarrKey.trim() && updatedConfig.prowlarrKey !== "off") {
-            if (isForbiddenTargetUrl(updatedConfig.prowlarrUrl)) {
-                return res
-                    .status(400)
-                    .json({ error: "L'URL Prowlarr pointe vers une cible interdite (link-local / métadonnées)." });
-            }
-        }
 
         updateUserConfig(uuid.trim(), encryptConfig(updatedConfig), updatedConfig.pseudo, updatedConfig.prowlarrMode);
 
@@ -1236,6 +1309,19 @@ app.post("/api/admin/maintenance/purge-expired", requireAdmin, adminActionLimite
     const { asyncPurgeOldCachedTorrents } = require("./lib/db");
     const purged = await asyncPurgeOldCachedTorrents(30 * 86400);
     res.json({ success: true, purged, message: `${purged} torrents expirés (+30j) supprimés du cache.` });
+});
+
+// Purge des utilisateurs inactifs (+30 jours)
+app.post("/api/admin/maintenance/purge-inactive-users", requireAdmin, adminActionLimiter, async (req, res) => {
+    const { count, error } = purgeInactiveUsers(30 * 86400);
+    if (error) {
+        return res.status(500).json({ error: "Erreur lors de la purge des utilisateurs inactifs : " + error });
+    }
+    res.json({
+        success: true,
+        purged: count,
+        message: `${count} utilisateur(s) inactif(s) (+30j) supprimé(s).`
+    });
 });
 
 // Optimisation SQLite (WAL checkpoint & VACUUM) déportée dans le worker thread
